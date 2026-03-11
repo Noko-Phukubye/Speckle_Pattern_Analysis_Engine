@@ -245,13 +245,14 @@ for iteration,texture in enumerate(textures):
 
             nodes_2d, deformed_nodes_2d = ipt.load_fe_nodes(bdf_path, op2_path)
 
-            # 3 Scale the data to fit the image (might automate)
-            x_scale = 1000
+            # Scale the data to fit the image
+            max_x_FE = np.max(nodes_2d[:, 0])
+            x_scale  = image_width / max_x_FE
             nodes_2d = nodes_2d * x_scale
             deformed_nodes_2d = deformed_nodes_2d * x_scale
             displacements_2d = deformed_nodes_2d - nodes_2d
 
-            # 4 Create matrix for sizing boundaries of the displacement field
+            # Create matrix for sizing boundaries of the displacement field
             matrix = np.full((image_height,image_width), np.nan)
             disc_dx,disc_dy,interp_rbfx, interp_rbfy = ipt.smooth_field(
                 matrix, 
@@ -288,7 +289,7 @@ for iteration,texture in enumerate(textures):
                 )
 
             # -------------------------------------------------------------------------
-            # Move reference images from temporary folder to reference analysis folder
+            # Copy reference images from temporary folder to reference analysis folder
             # -------------------------------------------------------------------------
             # Get names
             reference_image_files = ipt.get_image_strings(temp_ref_image_folder, 
@@ -303,10 +304,14 @@ for iteration,texture in enumerate(textures):
 
             # Move items
             for image_name in reference_image_files:
+
+                # Source and destination paths
                 src = os.path.join(temp_ref_image_folder, image_name)
                 dst = os.path.join(reference_image_path, image_name)
+
+                # Copy files
                 shutil.copy2(src, dst)
-                print(f"Copied: {image_name}")
+                print(f"| Copied: {image_name}")
 
             # -------------------------------------------------------------------------
             # Renumber reference images starting at N + 2
@@ -317,10 +322,10 @@ for iteration,texture in enumerate(textures):
             # Interpolated and deformed using traditional grid-based
             # techniques
 
-            ipt.ordered_prefix(
-                reference_image_path,
-                start_at=(last_nummber+2)
-                )
+            # ipt.ordered_prefix(
+            #     reference_image_path,
+            #     start_at=(last_nummber+2)
+            #     )
 
             # -------------------------------------------------------------------------
             # Deformed the reference images in the reference analysis folder (discrete)
@@ -329,7 +334,8 @@ for iteration,texture in enumerate(textures):
 
             # Loop through each image and deform
             for k, ref_image_file in enumerate(image_files):
-
+                
+                # Get reference image
                 ref_img_path = os.path.join(reference_image_path, ref_image_file)
                 reference_image = cv2.imread(ref_img_path)
                 if reference_image is None:
@@ -353,14 +359,15 @@ for iteration,texture in enumerate(textures):
                     )
                 #-----------------------------------------------------------------------------------
 
+                # Apply name to the deformed image and save
                 deformed_path = os.path.join(deformed_image_path, deformed_name)
                 cv2.imwrite(deformed_path, transformed_image)
                 toc_def = time.time()
 
 
             # -------------------------------------------------------------------------
-            # Move the reference images in the temporary reference image folder to the 
-            # analysis folder. This will result in 2N reference images in the folder
+            # Copy the reference images in the temporary reference image folder to the 
+            # analysis folder again. This will result in 2N reference images in the folder
             # -------------------------------------------------------------------------
             for image_name in reference_image_files:            # reference images
                 src = os.path.join(temp_ref_image_folder, image_name)
@@ -368,20 +375,24 @@ for iteration,texture in enumerate(textures):
                 shutil.copy2(src, dst)
                 print(f"Copied: {image_name}")
 
-            # Similarly with the Perlin deformed images
+            # -------------------------------------------------------------------------
+            # Similarly, copy the (analytically) deformed images in the temporary reference 
+            # image folder to the deformed images analysis folder. This will result in a total
+            # of 2N deformed images in the folder.
+            # -------------------------------------------------------------------------
             deformed_image_files = ipt.get_image_strings(
                 temp_deform_image_folder, 
                 imagetype='tif', 
                 parity='odd')
             
-            for image_name in deformed_image_files:            # Deformed images
+            for image_name in deformed_image_files:                                 # Deformed images
                 src3 = os.path.join(temp_deform_image_folder, image_name)         # Get file
                 dst3 = os.path.join(deformed_image_path, image_name)                # Move file
                 shutil.copy2(src3, dst3)
                 print(f"Copied: {image_name}")
 
         # -------------------------------------------------------------------------
-        # Apply blur to both reference and deformed images
+        # Apply blur to both reference and deformed images (optional)
         # -------------------------------------------------------------------------
         Def_flags = {"Image_blur": True}
         
@@ -454,7 +465,7 @@ for iteration,texture in enumerate(textures):
             time.sleep(5)   
             subprocess.run('ray status', shell=True)
         
-        
+        # Run analysis
         if DIC_flags["run_analysis"]:
             ipt.run_dic(
                 settings,
@@ -472,28 +483,46 @@ for iteration,texture in enumerate(textures):
     # -------------------------------------------------------------------------
     # Process DIC results and save error files in binary for later access
     # -------------------------------------------------------------------------
-    if flags['error_dist']:
-        print('\n8. Error distribution analysis...\n')
-        # Loop through the numpy files (from the DIC analysis) and perform error analysis.
-        # Ignore files that have f.split('_')[1] == '_T' as these are the subpixel translations
+    # Loop through the numpy files (from the DIC analysis) and perform error analysis.
+    # Ignore files that have f.split('_')[1] == '_T' as these are the subpixel translations
 
+    if flags['error_dist']:
+        print('\n| Error analysis...\n')
+        
         # DIC binary files
         sundic_binary_files = sorted(
             [f for f in os.listdir(sundic_binary_folder)
             if f.endswith('results.sdic')],
             key=lambda x: int(x.split('_')[0])
         )
-        print(sundic_binary_files)
-        # Get prefixes for id/indexing purposes
+        print(f"\nSUNDIC files found: {sundic_binary_files[0]} through {sundic_binary_files[-1]}")
+
+        # The prefix-based numbering system is used for images and results files. The 
+        # reference images use even-numbered prefixes while the deformed images use odd 
+        # numbers. The associated files use an even-number prefix system just like 
+        # the reference images. Here the expected prefixes are initialised based on the number of 
+        # existing files in the sundic results folder to be used to call each file.
+
         all_expected_prefixesbin = ipt.expected_prefixes(
             sundic_binary_folder,odd=False,skip=True)
+        
+        # Each prefix will have an index. Should a file not be found at that prefix the \
+        # Associated index will be used for reporting purposes.
         prefix_positionsbin = {prefix: i for i, prefix in enumerate(all_expected_prefixesbin)}
 
-        # FE data. Reload if it has not been already
+
+        # -------------------------------------------------------------------------
+        # Load FEA result files if they weren't loaded upstream
+        # -------------------------------------------------------------------------
+        # The FE data is required for error analysis. If "just_dic" is true
+        # then the data is not loaded upstream. But this is also for in case the
+        # data was not loaded for any other reason.
+
         if "nodes_2d" not in globals():
             op2_path = path.flat30_4mm_op2
             bdf_path = path.flat30_4mm_bdf
             nodes_2d, deformed_nodes_2d = ipt.load_fe_nodes(bdf_path, op2_path)
+
             # 3 Scale the data to fit the image (might automate)
             x_scale = 1000
             nodes_2d = nodes_2d * x_scale
@@ -501,6 +530,8 @@ for iteration,texture in enumerate(textures):
             displacements_2d = deformed_nodes_2d - nodes_2d
             # 4 Create matrix for sizing boundaries of the displacement field
             matrix = np.full((image_height,image_width), np.nan)
+
+            # Get RBF interpolator objects
             disc_dx,disc_dy,interp_rbfx, interp_rbfy = ipt.smooth_field(matrix, nodes_2d, deformed_nodes_2d, 3)        
 
         fem_xcoord = nodes_2d[:, 0]
@@ -508,22 +539,16 @@ for iteration,texture in enumerate(textures):
         fem_x_disp = displacements_2d[:, 0]  # x-direction displacement
         fem_y_disp = displacements_2d[:, 1]
         fem_mag = np.sqrt(fem_x_disp**2 + fem_y_disp**2)
-        # Coordinate array for interpolation. Converted to Lagrange using RBF interpolators
-        # and inverse displacement field
 
+        # -------------------------------------------------------------------------
+        # Coordinate system correction
+        # -------------------------------------------------------------------------
         lag_dx = interp_rbfx(np.column_stack([fem_xcoord, fem_ycoord]))
         lag_dy = interp_rbfy(np.column_stack([fem_xcoord, fem_ycoord]))
 
         fem_xcoord_lag = fem_xcoord - lag_dx
         fem_ycoord_lag = fem_ycoord - lag_dy
-
         fem_points = np.column_stack((fem_xcoord_lag, fem_ycoord_lag))
-        print(f'FEM points shape = {fem_points.shape}')
-
-        # Array for storing the overall mean error value for each file.
-        print(f'\nnumpy files found: {len(sundic_binary_files)}')
-        meanmean = np.zeros(len(sundic_binary_files))
-        print(f'\nMean array generated {meanmean}')
 
         # Initialising i manually. Struggling with enumerate() for some reason
         i = 0
@@ -539,26 +564,31 @@ for iteration,texture in enumerate(textures):
                 print(f'Reading DIC data: file {sundic_data_path}')
 
                 if not os.path.exists(sundic_data_path):
-                    print(f"File path: {sundic_data_path} not found. Moving to next prefix\n")
+                    print(f"\n| ERROR: File path {sundic_data_path} not found. \nMoving to next prefix\n")
                     continue
 
-                # Load path and file name for DIC data
+                # -------------------------------------------------------------------------
+                # Load DIC results object
+                # -------------------------------------------------------------------------
                 sundic_data, nRows, nCols = sdpp.getDisplacements(
                     sundic_data_path,
                     -1, 
                     smoothWindow=0
                     )
 
-                # sundic_data = np.load(sundic_data_path)
+                # Organise results and associated coordinate locations into vectors
                 x_coord, y_coord = sundic_data[:, 0], sundic_data[:, 1]
                 X_disp, Y_disp = sundic_data[:, 3], sundic_data[:, 4]
                 dic_mag = np.sqrt(X_disp**2 + Y_disp**2)
 
+                # Create matrix from vectors
                 sundic_points = np.column_stack((x_coord,y_coord))
-                print(f'DIC points shape = {sundic_points.shape}')
-                print(f'reshaped DIC data (Z) = {(dic_mag.reshape(nCols,nRows)).shape}')
 
-                # === Interpolation and Error Analysis ===
+
+                # -------------------------------------------------------------------------
+                # Interpolation of displacements for error calculation
+                # -------------------------------------------------------------------------
+                # Select displacement quantities to analyse
                 value = 0
                 if value == 0:
                     fem_value = fem_x_disp
@@ -575,8 +605,9 @@ for iteration,texture in enumerate(textures):
                 else:
                     raise ValueError("Invalid value")
 
-                # Only interpolate FE-grid and subtract DIC data
-                #----------------------------------------------------
+                # -------------------------------------------------------------------------
+                # Interpolate FE displacements on to the SUNDIC coordinate frame
+                # -------------------------------------------------------------------------
                 interpolated_FEM_values = griddata(
                     fem_points, 
                     fem_value, 
@@ -584,46 +615,46 @@ for iteration,texture in enumerate(textures):
                     method='cubic'
                     )
 
-                # Reshape data
+                # Reshape data into 2D matrix
                 dic_value = dic_value.reshape(nCols,nRows)
                 interpolated_FEM_values = interpolated_FEM_values.reshape(nCols,nRows)
 
+                # -------------------------------------------------------------------------
+                # Calculate the error grid
+                # -------------------------------------------------------------------------
                 errors2 = interpolated_FEM_values - dic_value
 
-                # Save numpy files for data exploration
+                # -------------------------------------------------------------------------
+                # Save error grid as binary files (same naming convention as reference images)
+                # for later use
+                # -------------------------------------------------------------------------
                 numpath = os.path.join(numpy_files,f"{file_number}_errors.npy")       
                 np.save(numpath, errors2)
                 #----------------------------------------------------
 
-                print('errors grid shape = ',errors2.shape)
-                mean_err = np.nanmean(errors2)
-                print(f'Mean error = {mean_err:.4f}')
-
-                meanmean[i] = mean_err
+                # Increment i to move on to the next file
                 i = i + 1
 
-                '''
-                The higher and the narrower the central peak, the better the correspondence between
-                the imposed and the calculated displacements, thus the more accurate the results are.
-
-                All the images are numerically treated in the same way. The difference in
-                displacements is, therefore, only related to the speckle morphology.
-                '''
-
-                #-------------------------------------------------------------------------------------------------
+                # -------------------------------------------------------------------------
+                # Create y-averaged slices of both FE and DIC displacements 
+                # -------------------------------------------------------------------------
+                # The SUNDIC coordinate grid is used for both. The FE data has been 
+                # interpolated on to the DIC frame so the shapes are compatible
                 x_grid = x_coord.reshape(nCols, nRows)
 
-                # Collapse  grid along y (axis = 1)
+                # Collapse error grid along y (axis = 1)
                 collapsed_errorgrid = np.nanmean(errors2, axis=1)
+
+                # Collapse FE displacement data along axis = 1
                 FE_value_collapse = np.nanmean(interpolated_FEM_values, axis=1)
+
+                # Collapse DIC displacement data along axis = 1
                 DIC_collapse = np.nanmean(dic_value, axis = 1)
+
+                # Domain
                 x_line = np.mean(x_grid, axis=1)
                 
-                print(f'\nX_line min = {np.min(x_line)}\nX_line max = {np.max(x_line)}')
-
-                print(f'\nCollapsed shape = {collapsed_errorgrid.shape}\nx_line shape = {x_line.shape}')
-                
-                # NB: Save numpy file to reload for processing
+                # Save error grid as binary file
                 #----------------------------------------------------
                 slice_numpy = np.column_stack((
                     collapsed_errorgrid,
@@ -631,9 +662,6 @@ for iteration,texture in enumerate(textures):
                     FE_value_collapse,
                     DIC_collapse
                     ))
-        
-                print(f'slice data = {slice_numpy.shape}')
-
            
                 save_collape = os.path.join(slice_path,f'{file_number}_slice_{string}.npy')
                 np.save(save_collape,slice_numpy)
@@ -656,23 +684,34 @@ for iteration,texture in enumerate(textures):
                 tb = traceback.extract_tb(sys.exc_info()[2])
                 filename, line_number, function_name, text = tb[-1]  # Last traceback entry
                 print(f'Error with file: {sundic_data_path},\nMessage {str(e)}\nLine: {line_number}')
+                
 
-    #-----------------------------------------------
+    # -------------------------------------------------------------------------
+    # Separate the error results into two groups
+    # -------------------------------------------------------------------------
+    # At this point the error files are all saved in the same location. This part of the script
+    # groups the files into their associated deformation method to be able to compare
+    # them. It is not difficult to achieve the separation because the 2N image files
+    # repeat after N images. Therefor the error results, which use the same prefix-based 
+    # naming convention, are split based after the N'th prefix.
+
     if flags['error_separation']:
-
-        # 2. Separate the interpolation errors
+                                                  
+        # Read the current excel workbook file
         path_2_doc = ipt.excel_doc_path(excel_pathh, 
                                         doc_name = "my_doc",
                                         override_doc_num = None)
 
-        # Half the reference images
+        # Half the reference images (split at N)
         image_list = ipt.get_image_strings(reference_image_path)
         iter_range = int(len(image_list) / 2)      
         print(f'range = {iter_range}')
 
+        # Initiate vectors to store the RMSE and percentage differences
         rms_diffr = np.full((int(iter_range),1), np.nan)
         percent_diffr = np.full((iter_range, 1), np.nan)
 
+        # Loop through each analytical/ discrete deformation data pair
         for i in range(int(iter_range)):
 
             try:
