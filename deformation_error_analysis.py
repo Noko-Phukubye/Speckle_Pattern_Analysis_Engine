@@ -176,8 +176,8 @@ for iteration,texture in enumerate(textures):
     # =========================================================================
     # DYNAMIC DIRECTORY PATH DEFINITIONS
     # =========================================================================
-    correction_hold_folder_ref = rf"data\speckle_pattern_img\reference_im\newPerlin_hold_folder\{texture}"
-    correction_hold_folder_def = rf"data\speckle_pattern_img\deformed_im\newPerlin_hold_deform_folder\{texture}"
+    temp_ref_image_folder = rf"data\speckle_pattern_img\reference_im\Temp_reference_folder\{texture}"
+    temp_deform_image_folder = rf"data\speckle_pattern_img\deformed_im\Temp_deformed_folder\{texture}"
     err_plots_correct       = rf"output\plots\Error_corrected\{texture}"
     numpy_files             = rf"output\numpy_files\discanaly\{texture}"
     scatter_plots           = rf"output\slices\slice_scatter_plots\{texture}"
@@ -188,8 +188,8 @@ for iteration,texture in enumerate(textures):
     slice_path_img = rf"output\Slices\{texture}\images"
 
     # Generate folders
-    dynamic_directories = [correction_hold_folder_ref, 
-                           correction_hold_folder_def,
+    dynamic_directories = [temp_ref_image_folder, 
+                           temp_deform_image_folder,
                            err_plots_correct,
                            numpy_files,
                            scatter_plots,
@@ -230,13 +230,16 @@ for iteration,texture in enumerate(textures):
             # -----------------------------------------------------------------------------------
             path_2_doc = ipt.make_xl(excel_pathh, file_name="my_doc")
 
+            # -------------------------------------------------------------------------
+            # Generate N images. These include reference and deformed images
+            # -------------------------------------------------------------------------
             image_width = 2000
             image_height = 500
-
-            # Number of patterns to generate
             pattern_count = 350
 
-            # 2 Load FEA data
+            # -------------------------------------------------------------------------
+            # Load FE data and create RBF interpolator objects
+            # -------------------------------------------------------------------------            
             op2_path = path.flat30_4mm_op2
             bdf_path = path.flat30_4mm_bdf
 
@@ -257,60 +260,58 @@ for iteration,texture in enumerate(textures):
                 3
                 )
 
-            '''
-            Texture options:    none
-                                thresholded
-                                sinusoidal
-                                bimodal
-                                logarithmic
-                                cubic
-                                perlin_blobs
-            '''
-            # 5 
-            # Generate and analytically deform noise images with texture
+            # -------------------------------------------------------------------------
+            # Generate Perlin noise images. Deform during generation (Analytical)
+            # -------------------------------------------------------------------------
+            # The images are stored in temporary folders, not the analysis folders
             ipt.generate_perlin_pair(
                 image_height,image_width, 
                 interp_rbfx, interp_rbfy,
                 path_2_doc,
-                correction_hold_folder_ref,
-                correction_hold_folder_def,
+                temp_ref_image_folder,
+                temp_deform_image_folder,
                 number_of_images=pattern_count,
                 texture_fun=texture
             )
-            
-            # 6 
-            # Pause to avoid any caching issues with the Perlin noise images
-            # time.sleep(0.25)
 
-            # 7 
-            # Pattern evaluation using metrics
+            # -------------------------------------------------------------------------
+            # Analyse patterns
+            # -------------------------------------------------------------------------
             print('\n3. Analysing speckle patterns...\n')
             ipt.evaluate_patterns(
                 excel_pathh,
-                correction_hold_folder_ref,
+                temp_ref_image_folder,
                 power_spec,
                 autocorrelation_path,
                 doc_name='my_doc',
                 doc_number=None
                 )
 
-            # 8 
-            # copy reference Perlin noise images to "reference images" folder
-            reference_image_files = ipt.get_image_strings(correction_hold_folder_ref, 
+            # -------------------------------------------------------------------------
+            # Move reference images from temporary folder to reference analysis folder
+            # -------------------------------------------------------------------------
+            # Get names
+            reference_image_files = ipt.get_image_strings(temp_ref_image_folder, 
                                                         imagetype='tif', 
                                                         parity='even')
             
+            # Get last number. The reference images will be duplicated. The images 
+            # use an even numbered-prefix naming system. The last number is used to
+            # initialise the naming of the duplicate images.
             last_nummber = int(reference_image_files[-1].split('_')[0])             # Last index in list
             print('\nLast prefix:', last_nummber)
 
+            # Move items
             for image_name in reference_image_files:
-                src = os.path.join(correction_hold_folder_ref, image_name)
+                src = os.path.join(temp_ref_image_folder, image_name)
                 dst = os.path.join(reference_image_path, image_name)
                 shutil.copy2(src, dst)
                 print(f"Copied: {image_name}")
 
-            # 9 
-            # renumber reference images starting at N + 2
+            # -------------------------------------------------------------------------
+            # Renumber reference images starting at N + 2
+            # -------------------------------------------------------------------------
+        
             # This means that the first half of the image set will consist of the analytically 
             # deformed Perlin images and the second half will consist of images that were
             # Interpolated and deformed using traditional grid-based
@@ -321,11 +322,12 @@ for iteration,texture in enumerate(textures):
                 start_at=(last_nummber+2)
                 )
 
-            # 10 deform reference images
+            # -------------------------------------------------------------------------
+            # Deformed the reference images in the reference analysis folder (discrete)
+            # -------------------------------------------------------------------------
             image_files = ipt.get_image_strings(reference_image_path)
 
-            # Deform each image 
-            # Then move the Perlin-deformed images to the ref folder
+            # Loop through each image and deform
             for k, ref_image_file in enumerate(image_files):
 
                 ref_img_path = os.path.join(reference_image_path, ref_image_file)
@@ -334,7 +336,7 @@ for iteration,texture in enumerate(textures):
                     print(f"Warning: Could not read reference image {ref_img_path}")
                     continue
 
-                # Create deformed image name (odd number). This should
+                # Create deformed image name (odd number).
                 ref_num = int(ref_image_file.split('_')[0])
                 deform_num = ref_num + 1
                 deformed_name = f"{deform_num}_Generated_spec_image.tif"
@@ -356,27 +358,31 @@ for iteration,texture in enumerate(textures):
                 toc_def = time.time()
 
 
-            # 11 
-            # move perlin pairs to "reference images" folder
+            # -------------------------------------------------------------------------
+            # Move the reference images in the temporary reference image folder to the 
+            # analysis folder. This will result in 2N reference images in the folder
+            # -------------------------------------------------------------------------
             for image_name in reference_image_files:            # reference images
-                src = os.path.join(correction_hold_folder_ref, image_name)
+                src = os.path.join(temp_ref_image_folder, image_name)
                 dst = os.path.join(reference_image_path, image_name)
                 shutil.copy2(src, dst)
                 print(f"Copied: {image_name}")
 
             # Similarly with the Perlin deformed images
             deformed_image_files = ipt.get_image_strings(
-                correction_hold_folder_def, 
+                temp_deform_image_folder, 
                 imagetype='tif', 
                 parity='odd')
             
             for image_name in deformed_image_files:            # Deformed images
-                src3 = os.path.join(correction_hold_folder_def, image_name)         # Get file
+                src3 = os.path.join(temp_deform_image_folder, image_name)         # Get file
                 dst3 = os.path.join(deformed_image_path, image_name)                # Move file
                 shutil.copy2(src3, dst3)
                 print(f"Copied: {image_name}")
 
+        # -------------------------------------------------------------------------
         # Apply blur to both reference and deformed images
+        # -------------------------------------------------------------------------
         Def_flags = {"Image_blur": True}
         
         ipt.flag_status(Def_flags,wait_time=1.5)
@@ -398,19 +404,17 @@ for iteration,texture in enumerate(textures):
                 par = 'odd')
 
 
-        # 12 
-        # run DIC using pattern_analysis.py before moving to the next section of this script
-        # Toggle between running analysis and/or processing the results
+        # -------------------------------------------------------------------------
+        # Run DIC on all the images
+        # -------------------------------------------------------------------------
         DIC_flags = {"run_analysis": True}
         
         ipt.flag_status(DIC_flags,wait_time=1.5)
+        print("\n|Running DIC analysis...\n")
 
-
-        print("\n6. Running DIC analysis...\n")
-
+        # Check for config file
         if not os.path.exists(DIC_settings_path):
             print(f"Settings file not found at: {DIC_settings_path}")
-                
         settings = sdset.Settings.fromSettingsFile(DIC_settings_path)
 
         roi = 'Auto'
@@ -428,8 +432,8 @@ for iteration,texture in enumerate(textures):
         settings.ROI = [start_x, start_y, width, height]
         settings.virtSubsetSize = 33
         settings.StepSize = 11
-        settings.GaussianBlurSize = 7
-        settings.GaussianBlurStdDev = 1.0
+        settings.GaussianBlurSize = 5
+        settings.GaussianBlurStdDev = 0.0
         settings.DebugLevel = 2
         settings.CPUCount = 8
         settings.ReferenceStrategy = "Absolute"
@@ -465,8 +469,9 @@ for iteration,texture in enumerate(textures):
 
         plt.close('all')
 
-    #-----------------------------------------------
-    # Process DIC results and save error files
+    # -------------------------------------------------------------------------
+    # Process DIC results and save error files in binary for later access
+    # -------------------------------------------------------------------------
     if flags['error_dist']:
         print('\n8. Error distribution analysis...\n')
         # Loop through the numpy files (from the DIC analysis) and perform error analysis.
