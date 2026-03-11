@@ -1,1 +1,0 @@
-# Speckle_Pattern_Analysis_Engine

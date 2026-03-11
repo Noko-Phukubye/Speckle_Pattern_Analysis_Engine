@@ -1,0 +1,31 @@
+﻿# Ignore virtual environments
+virtual/
+env/
+venv/
+
+# Ignore Python caches
+__pycache__/
+*.pyc
+
+# Ignore large or generated files
+*.tif
+*.xlsx
+*.log
+*.tmp
+*.bak
+
+# Ignore DIC and image output folders
+output/
+temp/
+data/speckle_pattern_img/reference_im
+data/speckle_pattern_img/deformed_im
+data/speckle_pattern_img/Optimised
+
+# Ignore specific scripts and other files
+data\FEA\Plate_sims\Flat\nul
+teeeeeeeest.py
+temp.py
+optimise.py
+
+# VSCode settings
+.vscode/
