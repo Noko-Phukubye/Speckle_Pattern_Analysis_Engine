@@ -235,7 +235,7 @@ for iteration,texture in enumerate(textures):
             # -------------------------------------------------------------------------
             image_width = 2000
             image_height = 500
-            pattern_count = 350
+            pattern_count = 5
 
             # -------------------------------------------------------------------------
             # Load FE data and create RBF interpolator objects
@@ -369,9 +369,13 @@ for iteration,texture in enumerate(textures):
             # Copy the reference images in the temporary reference image folder to the 
             # analysis folder again. This will result in 2N reference images in the folder
             # -------------------------------------------------------------------------
-            for image_name in reference_image_files:            # reference images
+            for image_name, image_index in enumerate(reference_image_files):          
                 src = os.path.join(temp_ref_image_folder, image_name)
-                dst = os.path.join(reference_image_path, image_name)
+
+                # The analytical image prefixes should follow the discrete image prefixes.
+                string_vector = image_name.split('_')
+                new_name_deformed_name.split('_')[0] = last_nummber + image_index
+                dst = os.path.join(reference_image_path, new_name_deformed_name)
                 shutil.copy2(src, dst)
                 print(f"Copied: {image_name}")
 
@@ -711,18 +715,24 @@ for iteration,texture in enumerate(textures):
         rms_diffr = np.full((int(iter_range),1), np.nan)
         percent_diffr = np.full((iter_range, 1), np.nan)
 
+        # -------------------------------------------------------------------------
         # Loop through each analytical/ discrete deformation data pair
+        # -------------------------------------------------------------------------
         for i in range(int(iter_range)):
 
             try:
 
-                # get the two sets of errors
+                # The index is doubled to make it even because the file names use
+                # even-numbered prefixes
                 iter = i*2
 
                 an_file_prefix = iter
+
+                # Prefix number doubled to access the data associated with the 
+                # analytical deformation.
                 dis_file_prefix = an_file_prefix + iter_range*2 
 
-                # FIle names and load
+                # Use both index groups to access data files using their names
                 an_error_name = f"{an_file_prefix}_errors.npy"
                 dis_error_name = f"{dis_file_prefix}_errors.npy"
 
@@ -732,27 +742,31 @@ for iteration,texture in enumerate(textures):
                 file_1_error_grid = np.load(file_1_path)
                 file_2_error_grid = np.load(file_2_path)
 
+                # Find the RMSE for each file
                 RMSE_file_1 = np.sqrt(np.mean(file_1_error_grid**2))
                 RMSE_file_2 = np.sqrt(np.mean(file_2_error_grid**2))
 
-                print(f"--------\nRMSE discrete: {RMSE_file_1}")
-                print(f"RMSE analytical: {RMSE_file_2}\n--------")
+                # print(f"--------\nRMSE discrete: {RMSE_file_1}")
+                # print(f"RMSE analytical: {RMSE_file_2}\n--------")
 
+                # Determine the amplification ratio
                 amplification_ratio = RMSE_file_2/RMSE_file_1
 
                 # Ratio as a percentage
                 percent_diff = 100 * (amplification_ratio)
 
-                # Store results as vectors
+                # Store results as vectors in the initialised objects
                 rms_diffr[i] = amplification_ratio
                 percent_diffr[i] = percent_diff
 
             except Exception:
-                print("Error: Issue with the error grid binary file ")
+                print("| Error: Issue with the error grid binary file ")
 
-                            
+
+        # Read excel document. This is where the '
         p_metrics,meas_error,p_param,nans,_ = ipt.read_spec_excel(
             excel_pathh,doc_num=None, doc_name='my_doc')
+        
         metric_strings = ("MSF", "MIG", "$E_f$", "MIOSD",
                                 "Shannon entropy", "PSA", 
                                 "SSSIG", "$R_{peak}$")
@@ -815,14 +829,18 @@ for iteration,texture in enumerate(textures):
                 plot_save = os.path.join(scatter_plots,f'{plot_title}_{x_label}vs{y_label}.png')
                 plt.savefig(plot_save)
 
-            # plt.pause(1)
             plt.close()
 
-
-        # --- Plot percent error change against metrics ---
+        # -------------------------------------------------------------------------
+        # Plot percent error change against metrics
+        # -------------------------------------------------------------------------
+        # For every metric in the list:
         for number, metric in enumerate(metric_strings):
+            
+            # Create a scatter plot
+            plot_title = f"Percent change {metric}"
 
-            plot_title = "Percent change in image pairs"
+            # Get the first N entries in the specific metric column of the excel sheet 
             x_value = p_metrics[:iter_range, number]
             y_value = percent_diffr
             x_label = metric
@@ -845,6 +863,8 @@ for iteration,texture in enumerate(textures):
             plt.scatter(x_value_1d[valid_mask], y_value_1d[valid_mask], color='darkred')
             plt.xlabel(x_label)
             plt.ylabel(y_label)
+
+            # Show more detail
             # plt.title(plot_title)
             # plt.text(
             #     0.95, 1.02,
@@ -865,7 +885,6 @@ for iteration,texture in enumerate(textures):
 
             # plt.pause(1)
             plt.close()
-
 
         # 3 Save to excel
         ipt.write_data_to_excel(path_2_doc, rms_diffr, percent_diffr)
@@ -1086,40 +1105,17 @@ for iteration,texture in enumerate(textures):
                 )
                 plt.savefig(plot_save)
 
-            plt.pause(1)
             plt.close()
-
-            # # Plot the kernel density estimate of signal amplification against pattern metrics
-            # # KDE of errors
-            # plot_title = 'KDE distribution of grid-deformation on error'
-            # kde = gaussian_kde(percent_diffr)
-            # x_vals = np.linspace(np.min(percent_diffr), np.max(percent_diffr), 1000)
-            # y_vals = kde(x_vals)
-
-            # plt.plot(x_vals,y_vals,'k-')
-            # plt.title(plot_title)
-            # plt.xlabel(metric)
-            # plt.ylabel('Amplification')
-            # plt.show(block=False)
-            # if save_fig:
-            #     scatter_plots = r"output\slices\slice_scatter_plots"
-            #     if not os.path.exists(scatter_plots):
-            #         os.makedirs(scatter_plots)
-            #     plot_save = os.path.join(
-            #         scatter_plots,
-            #         f'{plot_title}_{x_label}vs{y_label}.png'
-            #     )
-            #     plt.savefig(plot_save)
-            # plt.pause(2)
-            # plt.close()
-
 
         # 3 Save to excel
         ipt.write_data_to_excel(path_2_doc, rms_diffr, percent_diffr)
 
 
-    #-----------------------------------------------
-    if flags['error_correction_opt']:
+        # -------------------------------------------------------------------------
+        # Fit a model to the amplitude ratio
+        # -------------------------------------------------------------------------    if flags['error_correction_opt']:
+        # Amplitude_ratio = f(metric_1, ......, metric 7)
+        # Uses SVR with GridSearchCV
 
         FLAG = {
     
@@ -1127,13 +1123,8 @@ for iteration,texture in enumerate(textures):
             'compare_with_analytical': False,
             'run_optimisation': False
         }
-
-        # Initialise coordinate 
-
-        # Create correction model using SVR with GridSearchCV
-        # Uses 2N Perlin noise data: N analytically deformed + N using map_coordinates
         
-        # Load training data for correction model
+        # Read current excel workbook
         myd_p_metrics, change, _, _, _ = ipt.read_spec_excel(
             excel_pathh, 
             doc_num=None, 
@@ -1150,9 +1141,11 @@ for iteration,texture in enumerate(textures):
         x_6_traincorr = myd_p_metrics[:, 5]
         x_7_traincorr = myd_p_metrics[:, 6]
 
+        # Ignore NaN and zero results. The zeros indicate a failed input from the upstream processes
         zmask = (~np.isnan(change[:, 3])) & (change[:, 3] > 0)
         z_correction = change[zmask,3]
 
+        # Stack the input data into a multidimensional object
         coordinate_arr_train = np.vstack((
             x_1_traincorr[zmask], 
             x_2_traincorr[zmask], 
@@ -1164,34 +1157,39 @@ for iteration,texture in enumerate(textures):
             )
             ).T
 
-        print(f'\n\n\n\nShape:{coordinate_arr_train.shape}')
-
-        # SVR hyperparameter grid for optimization
+        # -------------------------------------------------------------------------
+        # Surrogate modelling of the error amplification
+        # -------------------------------------------------------------------------
+        # SVR hyperparameters
         p_grid_corr = {
             'kernel': ['rbf'],  
             'C': np.logspace(-3, 3, 7),
             'gamma': ('auto', 'scale')
         }
 
-        # Scale features and target for SVR
+        # Scale input
         scaler_X_correction = StandardScaler()
         X_scaled_correction = scaler_X_correction.fit_transform(coordinate_arr_train)
 
+        # Scale output
         scaler_z_corr = StandardScaler()
         z_scaled_corr = scaler_z_corr.fit_transform(z_correction.reshape(-1, 1)).ravel()
 
-        # Train SVR model with grid search to predict the relative RMSE deviation
+        # Initialise SVR model
         svr_model_corr= GridSearchCV(
             SVR(), 
             p_grid_corr, 
             cv=5)
         
+        # Train SVR model
         svr_model_corr.fit(X_scaled_correction, z_scaled_corr)
 
+        # Model scoring
         print(f"Best R² (CV): {svr_model_corr.best_score_:.4f}")
         print(f"Train R²: {svr_model_corr.best_estimator_.score(X_scaled_correction, z_scaled_corr):.4f}")
 
-
+        # Amp ratio prediction using trained SVR. Input is 
+        # unscaled. Output is unscaled prediction. 
         def amp_change_value(X):
             """Predict using trained SVR model"""
             X_scaled_corrr = scaler_X_correction.transform(X)
@@ -1201,6 +1199,9 @@ for iteration,texture in enumerate(textures):
         # Get Analytically deformed results ( If applicable)
         excel_already_correct = r"output\excel_docs"
         
+        # -------------------------------------------------------------------------
+        # Data correction using model
+        # -------------------------------------------------------------------------
         if FLAG['compare_with_analytical']:
 
             # Load analytically deformed data for comparison
@@ -1221,7 +1222,7 @@ for iteration,texture in enumerate(textures):
             print(f"\nReading uncorrected sheet: \n{excel_data_to_correct}\n")
             p_metrics, meas_error, p_param, nans, indicators = ipt.read_spec_excel(
                 excel_data_to_correct, doc_num=None)
-            print('\n\readiiiiiiiiiiiiiiiiiiiiiinggg:', indicators)
+            print('\n\reading:', indicators)
 
             # Extract coordinate features from measurement data
             x_1 = p_metrics[:, 0]
@@ -1360,458 +1361,6 @@ for iteration,texture in enumerate(textures):
 
                     # plt.pause(0.2)
                     plt.close()
-
-
-            # If optimisation option is selected. 
-            if FLAG["run_optimisation"]:
-
-                print('\n9. Optimising speckle patterns...')
-
-                #-----------------------------------------------------
-                override_optimisation = False
-
-                if override_optimisation:
-                    gen_value = 'speckle'
-                else:
-                    gen_value  = indicators[0, 0]
-
-
-                p_grid = {
-                    'kernel': ['rbf'],  
-                    'C': np.logspace(-3, 3, 7),
-                    'gamma' : ('auto','scale')
-                }
-
-                nan_constraint_limit = 15
-                #-----------------------------------------------------
-
-                print('Gen value =', gen_value)
-                z = corrected_error[:]
-                optimization_direction  = 1            # No maximisation in this case (only min error)
-
-                if optimization_direction == 1:
-
-                    print('\nRunning minimisation\n'
-                        '---------------------------------------')
-                else:
-                    print('\nRunning maximisation\n'
-                        '---------------------------------------')
-
-                # Naming
-                first_pref = 0
-                opt_file_name = f'{first_pref}_Generated_spec_image.tif'
-
-                # Get metadata
-                x_1 = p_param[:,0]      
-                x_2 = p_param[:,1]    
-                x_3 = p_param[:,2]   
-                x_4 = p_param[:,3]     
-                x_5 = p_param[:,4]      
-                # For nans
-                x_6 = nans[:,0]
-
-
-                #------------------------------------------------------------
-                if gen_value.lower() == 'speckle':
-                    # Coordinate array
-                    coordinate_arr_spec = np.vstack((x_1, x_3, x_4, x_5)).T
-
-                    # SVR surrogate model
-                    scaler_X_spec = StandardScaler()
-                    X_scaled_spec = scaler_X_spec.fit_transform(coordinate_arr_spec)
-
-                    scaler_z_spec = StandardScaler()
-                    # Standard scalwr expects 2D array, not 1D
-                    z_scaled_spec = scaler_z_spec.fit_transform(z.reshape(-1, 1)).ravel()     
-                    svr_model_spec = SVR(kernel='rbf')
-                    svr_model_spec.fit(X_scaled_spec, z_scaled_spec)
-
-                    def interp_value(X):
-                        X_scaled_spec = scaler_X_spec.transform(X)
-                        z_pred_scaled_spec = svr_model_spec.predict(X_scaled_spec)
-                        return scaler_z_spec.inverse_transform(z_pred_scaled_spec.reshape(-1, 1)).ravel()
-
-                    scaler_nan_spec = StandardScaler()
-                    x6_scaled_spec = scaler_nan_spec.fit_transform(x_6.reshape(-1, 1)).ravel()
-
-                    svr_nan_spec = SVR(kernel='rbf')
-                    svr_nan_spec.fit(X_scaled_spec, x6_scaled_spec)
-
-                    def g1(x):
-                        x_scaled = scaler_X_spec.transform(x.reshape(1, -1))
-                        nan_scaled = svr_nan_spec.predict(x_scaled)
-                        nan_pred = scaler_nan_spec.inverse_transform(nan_scaled.reshape(-1, 1)).ravel()[0]
-                        nan_pred = np.clip(nan_pred, 0, 100)
-                        return nan_constraint_limit - nan_pred
-
-
-                    # Bounds
-                    bounds = [
-                        (np.min(x_1), np.max(x_1)),
-                        (np.min(x_3), np.max(x_3)),
-                        (np.min(x_4), np.max(x_4)),
-                        (np.min(x_5), np.max(x_5))
-                    ]
-
-                    def objective(x):
-                        return optimization_direction * interp_value(x.reshape(1, -1))[0]
-
-                    best_result = None
-                    for i in range(len(p_param[:, 0])):
-                        initial_guess = np.array([
-                            p_param[i, 0],
-                            p_param[i, 2],
-                            p_param[i, 3],
-                            p_param[i, 4]
-                        ])
-                        cons = [{'type': 'ineq', 'fun': g1}]
-
-                        with warnings.catch_warnings():
-                            warnings.filterwarnings("ignore", category=RuntimeWarning)
-                            result = minimize(
-                                objective,
-                                initial_guess,
-                                method='SLSQP',
-                                bounds=bounds,
-                                constraints=cons,
-                                options={'ftol': 1e-8, 'maxiter': 1000}
-                            )
-
-                        if best_result is None or result.fun <= best_result.fun:
-                            best_result = result
-
-                    if best_result is None:
-                        raise RuntimeError("Optimization failed for all initial guesses.")
-
-                    print(f" SLSQP result: {best_result}")
-                    solution = best_result.x
-                    print("Constraint value (should be >= 0):", g1(solution))
-
-                    # Custom  name
-                    custom_name = 'speckles.tif'
-                    file_name = '_'.join([opt_file_name, custom_name])
-
-                    spec_opt_file_path = os.path.join(optimised_sav_b, opt_file_name)
-                    generated_speckles = generate_and_save(
-                        image_height,
-                        image_width,
-                        25.4,
-                        solution[0],
-                        spec_opt_file_path,
-                        size_randomness=solution[3],
-                        position_randomness=solution[1],
-                        speckle_blur=1.5,
-                        grid_step=solution[2]
-                    )
-
-                    plt.imshow(generated_speckles, cmap='gray')
-                    plt.title(f'Optimised pattern: {file_name}')
-                    plt.show(block=False)
-                    plt.get_current_fig_manager().window.raise_()
-                    plt.pause(2)
-                    plt.close()
-
-
-                #------------------------------------------------------------
-                elif gen_value.lower() == 'lines':
-                    coordinate_arrcbl = np.vstack((x_2, x_3)).T
-
-                    # SVR surrogate model
-                    scaler_Xcbl = StandardScaler()
-                    X_scaledcbl = scaler_Xcbl.fit_transform(coordinate_arrcbl)
-
-                    scaler_zcbl = StandardScaler()
-                    z_scaledcbl = scaler_zcbl.fit_transform(z.reshape(-1, 1)).ravel()
-
-                    svr_modelcbl = SVR()
-
-                    gridcbl = GridSearchCV(svr_modelcbl, param_grid=p_grid, cv=5, n_jobs=-1)
-                    gridcbl.fit(X_scaledcbl, z_scaledcb)
-                    svr_modelcbl = gridcbl.best_estimator_
-
-                    def interp_value(X):
-                        """
-                        Polynomial interpolation for optimization
-                        """
-                        X_scaledcbl = scaler_Xcbl.transform(X)
-                        z_pred_scaledcbl = svr_modelcbl.predict(X_scaledcbl)
-                        return scaler_zcbl.inverse_transform(z_pred_scaledcbl.reshape(-1, 1)).ravel()
-
-                    # Define constraint inequality
-                    scaler_nancbl = StandardScaler()
-                    x6_scaledcbl = scaler_nancbl.fit_transform(x_6.reshape(-1, 1)).ravel()
-
-                    svr_nancbl = SVR()
-                    grid_nancbl = GridSearchCV(svr_nancbl, param_grid=p_grid, cv=5, n_jobs=-1)
-                    grid_nancbl.fit(X_scaledcbl, x6_scaledcbl)
-                    svr_nancbl = grid_nancbl.best_estimator_
-
-                    def g1(x):
-                        nan_scaledcbl = svr_nancbl.predict(scaler_Xcbl.transform(x.reshape(1, -1)))
-                        nan_predcbl = scaler_nancbl.inverse_transform(nan_scaledcbl.reshape(-1, 1)).ravel()[0]
-                        nan_predcbl = np.clip(nan_predcbl, 0, 100)
-                        return nan_constraint_limit - nan_predcbl
-
-                    bounds = [
-                        (np.min(x_2), np.max(x_2)),
-                        (np.min(x_3), np.max(x_3))
-                    ]
-
-                    def objective(x):
-                        return optimization_direction * interp_value(x.reshape(1, -1))[0]
-
-                    best_result = None
-                    for i in range(len(p_param[:, 0])):
-                        initial_guess = np.array([
-                            p_param[i, 1],
-                            p_param[i, 2]
-                        ])
-                        cons = [{'type': 'ineq', 'fun': g1}]
-
-                        with warnings.catch_warnings():
-                            warnings.filterwarnings("ignore", category=RuntimeWarning)
-                            result = minimize(
-                                objective,
-                                initial_guess,
-                                method='SLSQP',
-                                bounds=bounds,
-                                constraints=cons,
-                                options={'ftol': 1e-8, 'maxiter': 1000}
-                            )
-
-                        if best_result is None or result.fun <= best_result.fun:
-                            best_result = result
-
-                    if best_result is None:
-                        raise RuntimeError("Optimization failed for all initial guesses.")
-
-                    print(f"\n SLSQP result: {best_result}")
-                    solution = best_result.x
-                    print("Constraint value (should be >= 0):", g1(solution))
-
-                    custom_name = 'lines.tif'
-                    file_name = '_'.join([opt_file_name, custom_name])
-                    lines_opt_file_path = os.path.join(optimised_sav_b, opt_file_name)
-
-                    generate_lines(
-                        image_height,
-                        image_width,
-                        25.4,
-                        solution[1],
-                        lines_opt_file_path,
-                        orientation='vertical',
-                        N_lines=solution[2]
-                    )
-
-                    generated_lines = cv2.imread(lines_opt_file_path)
-                    plt.imshow(generated_lines, cmap='gray')
-                    plt.title(f'Optimised pattern: {file_name}')
-                    plt.show(block=False)
-                    plt.get_current_fig_manager().window.raise_()
-                    plt.pause(2)
-                    plt.close()
-
-
-                #------------------------------------------------------------
-                elif gen_value.lower() == "checkerboard":
-
-                    coordinate_arrcb = np.vstack((x_1, x_2)).T
-
-                    # SVR surrogate model
-                    scaler_Xcb = StandardScaler()
-                    X_scaledcb = scaler_Xcb.fit_transform(coordinate_arrcb)
-
-                    scaler_zcb = StandardScaler()
-                    z_scaledcb = scaler_zcb.fit_transform(z.reshape(-1, 1)).ravel()
-
-                    svr_modelcb = SVR()
-
-                    gridcb = GridSearchCV(svr_modelcb, param_grid=p_grid, cv=5, n_jobs=-1)
-                    gridcb.fit(X_scaledcb, z_scaledcb)
-                    svr_modelcb = gridcb.best_estimator_
-
-                    def interp_value(X):
-                        """
-                        Polynomial interpolation for optimization
-                        """
-                        X_scaledcb = scaler_Xcb.transform(X)
-                        z_pred_scaledcb = svr_modelcb.predict(X_scaledcb)
-                        return scaler_zcb.inverse_transform(z_pred_scaledcb.reshape(-1, 1)).ravel()
-
-                    # Define constraint inequality
-                    scaler_nancb = StandardScaler()
-                    x6_scaledcb = scaler_nancb.fit_transform(x_6.reshape(-1, 1)).ravel()
-
-                    svr_nancb = SVR()
-                    grid_nancb = GridSearchCV(svr_nancb, param_grid=p_grid, cv=5, n_jobs=-1)
-                    grid_nancb.fit(X_scaledcb, x6_scaledcb)
-                    svr_nancb = grid_nancb.best_estimator_
-
-                    def g1(x):
-                        nan_scaledcb = svr_nancb.predict(scaler_Xcb.transform(x.reshape(1, -1)))
-                        nan_predcb = scaler_nancb.inverse_transform(nan_scaledcb.reshape(-1, 1)).ravel()[0]
-                        nan_predcb = np.clip(nan_predcb, 0, 100)
-                        return nan_constraint_limit - nan_predcb
-
-                    # Bounds
-                    bounds = [
-                        (np.min(x_1), np.max(x_1)),
-                        (np.min(x_2), np.max(x_2))
-                    ]
-
-                    def objective(x):
-                        return optimization_direction * interp_value(x.reshape(1, -1))[0]
-
-                    best_result = None
-                    for i in range(len(p_param[:, 0])):
-                        initial_guess = np.array([p_param[i, 0], p_param[i, 1]])
-                        cons = [{'type': 'ineq', 'fun': g1}]
-
-                        with warnings.catch_warnings():
-                            warnings.filterwarnings("ignore", category=RuntimeWarning)
-                            result = minimize(
-                                objective,
-                                initial_guess,
-                                method='SLSQP',
-                                bounds=bounds,
-                                constraints=cons,
-                                options={'ftol': 1e-8, 'maxiter': 1000}
-                            )
-
-                        if best_result is None or result.fun <= best_result.fun:
-                            best_result = result
-
-                    if best_result is None:
-                        raise RuntimeError("Optimization failed for all initial guesses.")
-
-                    print(f"\nSLSQP result: {best_result}")
-                    solution = best_result.x
-                    print("Constraint value (should be >= 0):", g1(solution))
-
-                    # Generate and save checkerboard
-                    custom_name = "checkb.tif"
-                    file_name = "_".join([opt_file_name, custom_name])
-
-                    cb_opt_file_path = os.path.join(optimised_sav_b, opt_file_name)
-
-                    generate_checkerboard(
-                        image_height,
-                        image_width,
-                        dpi=25.4,
-                        path=cb_opt_file_path,
-                        line_width=solution[0],
-                        N_rows=solution[1]
-                    )
-
-                    generated_cb = cv2.imread(cb_opt_file_path)
-                    plt.imshow(generated_cb, cmap="gray")
-                    plt.title(f"Optimised pattern: {file_name}")
-                    plt.show(block=False)
-                    plt.get_current_fig_manager().window.raise_()
-                    plt.pause(2)
-                    plt.close()
-
-
-                #------------------------------------------------------------
-                elif gen_value.lower() == "perlin":
-                    coordinate_arrpl = np.vstack((x_1, x_2, x_3, x_4)).T
-
-                    # SVR surrogate model
-                    scaler_Xpl = StandardScaler()
-                    X_scaledpl = scaler_Xpl.fit_transform(coordinate_arrpl)
-
-                    scaler_zpl = StandardScaler()
-                    z_scaledpl = scaler_zpl.fit_transform(z.reshape(-1, 1)).ravel()
-
-                    svr_modelpl = SVR()
-
-                    gridpl= GridSearchCV(svr_modelpl, param_grid=p_grid, cv=5, n_jobs=-1)
-                    gridpl.fit(X_scaledpl, z_scaledpl)
-                    svr_modelpl = gridpl.best_estimator_
-
-                    def interp_value(X):
-                        """
-                        Polynomial interpolation for optimization
-                        """
-                        X_scaledpl = scaler_Xpl.transform(X)
-                        z_pred_scaledpl = svr_modelpl.predict(X_scaledpl)
-                        return scaler_zpl.inverse_transform(z_pred_scaledpl.reshape(-1, 1)).ravel()
-
-                    # Define constraint inequality
-                    scaler_nanpl = StandardScaler()
-                    x6_scaledpl = scaler_nanpl.fit_transform(x_6.reshape(-1, 1)).ravel()
-
-                    svr_nanpl = SVR()
-                    grid_nanpl = GridSearchCV(svr_nanpl, param_grid=p_grid, cv=5, n_jobs=-1)
-                    grid_nanpl.fit(X_scaledpl, x6_scaledpl)
-                    svr_nanpl = grid_nanpl.best_estimator_
-
-                    def g1(x):
-                        nan_scaledpl = svr_nanpl.predict(scaler_Xpl.transform(x.reshape(1, -1)))
-                        nan_predpl = scaler_nanpl.inverse_transform(nan_scaledpl.reshape(-1, 1)).ravel()[0]
-                        nan_predpl = np.clip(nan_predpl, 0, 100)
-                        return nan_constraint_limit - nan_predpl
-
-                    # Bounds
-                    bounds = [
-                        (np.min(x_1), np.max(x_1)),
-                        (np.min(x_2), np.max(x_2)),
-                        (np.min(x_3), np.max(x_3)),
-                        (np.min(x_4), np.max(x_4))
-                    ]
-
-                    def objective(x):
-                        return optimization_direction * interp_value(x.reshape(1, -1))[0]
-
-                    best_result = None
-                    for i in range(len(p_param[:, 0])):
-                        initial_guess = np.array([p_param[i, 0], p_param[i, 1], p_param[i, 2], p_param[i, 3]])
-                        cons = [{'type': 'ineq', 'fun': g1}]
-
-                        with warnings.catch_warnings():
-                            warnings.filterwarnings("ignore", category=RuntimeWarning)
-                            result = minimize(
-                                objective,
-                                initial_guess,
-                                method='SLSQP',
-                                bounds=bounds,
-                                constraints=cons,
-                                options={'ftol': 1e-8, 'maxiter': 1000}
-                            )
-
-                        if best_result is None or result.fun <= best_result.fun:
-                            best_result = result
-
-                    if best_result is None:
-                        raise RuntimeError("Optimization failed for all initial guesses.")
-
-                    print(f"\n\n SLSQP result: {best_result}")
-                    solution = best_result.x
-                    print("Constraint value (should be >= 0):", g1(solution))
-
-                    # Generate and save Perlin noise image
-                    custom_name = f"{indicators[1, 0]}_perlin.tif"
-                    file_name = "_".join([opt_file_name, custom_name])
-
-                    perlin_opt_file_path = os.path.join(optimised_sav_b, opt_file_name)
-
-                    optimised_perlin = ipt.generate_single_perlin_image(
-                        image_height,
-                        image_width,
-                        scale=solution[0],
-                        octaves=int(round(solution[1])),
-                        persistence=solution[2],
-                        lacunarity=solution[3],
-                        texture_function=indicators[1, 0]
-                    )
-                    cv2.imwrite(perlin_opt_file_path, optimised_perlin)
-                    plt.imshow(optimised_perlin, cmap="gray")
-                    plt.title(f"Optimised pattern: {file_name}")
-                    plt.show(block=False)
-                    plt.get_current_fig_manager().window.raise_()
-                    plt.pause(2)
-                    plt.close()
-
 
 
 toc = time.time()
