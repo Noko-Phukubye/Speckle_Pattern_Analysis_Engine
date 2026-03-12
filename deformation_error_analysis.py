@@ -314,21 +314,20 @@ for iteration,texture in enumerate(textures):
                 print(f"| Copied: {image_name}")
 
             # -------------------------------------------------------------------------
-            # Renumber reference images starting at N + 2
+            # Renumber reference images starting at N + 2 before deformation
             # -------------------------------------------------------------------------
-        
-            # This means that the first half of the image set will consist of the analytically 
-            # deformed Perlin images and the second half will consist of images that were
-            # Interpolated and deformed using traditional grid-based
-            # techniques
+            # The analytical-deformation reference images will be numbered 0 through N 
+            # and their associated deformed images are numbered 1 through N + 1.
+            # The discrete-deformation reference images will be numbered N + 2 through 2N.
+            # Their associated deformed images will be numbered N + 2 + 1 through 2N + 1.
 
-            # ipt.ordered_prefix(
-            #     reference_image_path,
-            #     start_at=(last_nummber+2)
-            #     )
+            ipt.ordered_prefix(
+                reference_image_path,
+                start_at=(last_nummber+2)
+                )
 
             # -------------------------------------------------------------------------
-            # Deformed the reference images in the reference analysis folder (discrete)
+            # Deform the reference images after renumbering (discrete)
             # -------------------------------------------------------------------------
             image_files = ipt.get_image_strings(reference_image_path)
 
@@ -350,7 +349,7 @@ for iteration,texture in enumerate(textures):
                 # Deform images
                 tic_def = time.time()
                 #-----------------------------DEFORM------------------------------------------------
-                # transformed_image, difference_image = 
+                # Deform using the interpolators 
                 # ipt.img_deform(reference_image, nodes_2d, deformed_nodes_2d,3) 
                 transformed_image, difference_image = ipt.img_deform(
                     reference_image, 
@@ -367,15 +366,14 @@ for iteration,texture in enumerate(textures):
 
             # -------------------------------------------------------------------------
             # Copy the reference images in the temporary reference image folder to the 
-            # analysis folder again. This will result in 2N reference images in the folder
+            # analysis folder again.
             # -------------------------------------------------------------------------
+            # These will serve as the analytical-deformation reference images. 
+            # This will result in 2N reference images in the folder.
+
             for image_name, image_index in enumerate(reference_image_files):          
                 src = os.path.join(temp_ref_image_folder, image_name)
-
-                # The analytical image prefixes should follow the discrete image prefixes.
-                string_vector = image_name.split('_')
-                new_name_deformed_name.split('_')[0] = last_nummber + image_index
-                dst = os.path.join(reference_image_path, new_name_deformed_name)
+                dst = os.path.join(reference_image_path, image_name)
                 shutil.copy2(src, dst)
                 print(f"Copied: {image_name}")
 
@@ -528,19 +526,23 @@ for iteration,texture in enumerate(textures):
             nodes_2d, deformed_nodes_2d = ipt.load_fe_nodes(bdf_path, op2_path)
 
             # 3 Scale the data to fit the image (might automate)
-            x_scale = 1000
-            nodes_2d = nodes_2d * x_scale
+            max_x_FE = np.max(nodes_2d[:, 0])
+            x_scale  = image_width / max_x_FE
             deformed_nodes_2d = deformed_nodes_2d * x_scale
             displacements_2d = deformed_nodes_2d - nodes_2d
             # 4 Create matrix for sizing boundaries of the displacement field
             matrix = np.full((image_height,image_width), np.nan)
 
             # Get RBF interpolator objects
-            disc_dx,disc_dy,interp_rbfx, interp_rbfy = ipt.smooth_field(matrix, nodes_2d, deformed_nodes_2d, 3)        
+            disc_dx,disc_dy,interp_rbfx, interp_rbfy = ipt.smooth_field(
+                matrix, 
+                nodes_2d, 
+                deformed_nodes_2d, 
+                3)        
 
         fem_xcoord = nodes_2d[:, 0]
         fem_ycoord = nodes_2d[:, 1]
-        fem_x_disp = displacements_2d[:, 0]  # x-direction displacement
+        fem_x_disp = displacements_2d[:, 0] 
         fem_y_disp = displacements_2d[:, 1]
         fem_mag = np.sqrt(fem_x_disp**2 + fem_y_disp**2)
 
