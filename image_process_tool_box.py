@@ -47,7 +47,7 @@ from cycler import cycler
 import time
 
 # =========================================================================
-# IMAGE DEFORMATION
+# IMAGE DEFORMATION AND GENERAL IMAGE PROCESSING
 # =========================================================================
 def img_deform(image, source_points=None, 
                destination_points=None, kern=3, dx=None, dy=None):
@@ -274,6 +274,88 @@ def cv2_deform(image, source_points = None, destination_points = None,
 
 
 
+# -------------------------------------------------------
+# Field interpolation
+# -------------------------------------------------------
+def smooth_field(matrix, source_points, destination_points, kern):
+
+    '''
+    Interpolates FE-field and returns passed-matrix-sized displacement field
+    values as well as x and y interpolator objects. Basically what's 
+    done in the code blocks above minus the pixel remapping. Also this function 
+    the interpolator objects returned from here can be passed to the remapping 
+    functions to make their process more efficient by bypassing the need to 
+    interpolate to perform the interpolation.
+
+    This functioin uses radial basis function interpolation to generate a smooth displacement field from
+    shifted nodal locations (source and destination points) which are mapped to a grid made by image dimensions. 
+    It is assumed that the shifted coordinates are on the same scale as the image that is used to define 
+    the grid and that they have the same aspect ratio.
+
+    Input: matrix -> Image used to size grid
+           source points -> 2D matrix, original xy coordinates
+           destination points -> 2D matrix, new xy coordinates
+
+    Output:
+        - dx: ndarry of floats, xdisplacement
+        - dy: ndarry of floats, ydisplacment
+        - rbf_interpolator_x: x-interpolator object
+        - rbf_interpolator_y: y-interpolator object
+    '''
+    h, w = matrix.shape[:2]  
+
+    # Create a grid of coordinates (destination grid). The grid size is based on the image dimensions.
+    # The grid will be used to obtain the remap coordinates for the deformed image.
+    grid_x, grid_y = np.meshgrid(np.arange(w), np.arange(h))
+    grid_x_flatten = grid_x.flatten()
+    grid_y_flatten = grid_y.flatten()
+
+    ''' 
+    The type of RBF that is used to interpolate the displacement field is described by the `kernel` parameter.
+    The following kernels are available:
+    Kernels: thin_plate_spline 
+            linear
+            cubic
+            quintic
+
+    `epsilon` must be specified if `kernel` is not one of {'quintic', 'cubic', 'thin_plate_spline', 'linear'}.
+    Shape parameter that scales the input to the RBF. If `kernel` is
+        'linear', 'thin_plate_spline', 'cubic', or 'quintic', this defaults to
+        1 and can be ignored because it has the same effect as scaling the
+        smoothing parameter. Otherwise, this must be specified.   
+    The kernel parameter is selected through the last argument of the function.       
+    '''
+    kernel_options = {1: 'thin_plate_spline', 
+                      2: 'linear', 
+                      3: 'cubic', 
+                      4: 'quintic'}
+
+    print("Generating displacement field.  Running TPS interpolation with kernel: ", kernel_options.get(kern))
+
+    kerne = kernel_options.get(kern)
+    if kerne is None:
+        raise ValueError("Invalid kernel option. Use 1 for thin_plate_spline, 2 for linear, 3 for cubic, or 4 for quintic.")
+
+    # Create interpolators for both XY directions
+    rbf_interpolator_x = RBFInterpolator(source_points, 
+                                         destination_points[:, 0] - source_points[:, 0], 
+                                         kernel=kerne)
+    
+    rbf_interpolator_y = RBFInterpolator(source_points, 
+                                         destination_points[:, 1] - source_points[:, 1], 
+                                         kernel=kerne)
+    '''
+    Apply RBF interpolation to get a smooth displacement field. The displacement field x and y components are 
+    reshaped to the image dimensions by stacking the grid coordinates and then reshaping the result. The displacement
+    field is interpolated at the grid coordinates.
+    '''
+    # Sample at pixel coordinates. 
+    dx = rbf_interpolator_x(np.column_stack([grid_x_flatten, grid_y_flatten])).reshape(h, w)
+    dy = rbf_interpolator_y(np.column_stack([grid_x_flatten, grid_y_flatten])).reshape(h, w)
+
+    return dx, dy, rbf_interpolator_x, rbf_interpolator_y
+
+
 # ---------------------------------------------------------------------------------------------
 # Basic image translation
 # ---------------------------------------------------------------------------------------------
@@ -315,7 +397,6 @@ def translate_image(image, u, v):
     return translated
 
 
-
 #-----------------------------------------------------------------------------------------------------
 # Numpy-based image shift in the Fourier domain
 #-----------------------------------------------------------------------------------------------------
@@ -348,9 +429,9 @@ def image_shift_fourier_scipy(image, u, v):
 
 
 
-
-# ---------------------------------------------------------------------------------------------
+# -------------------------------------------
 # Subpixel translations
+# -------------------------------------------
 def subpixel_translation(reference_image_path, savepath, shift_method ='fourier',  
                          imagetype='tif',  umin=0.0, umax=1.05, intervals=0.05):
     """
@@ -509,6 +590,243 @@ def difference_image(original,deformed, image_reference = 0, wait = 7.5, save_lo
     plt.pause(wait)
     plt.close()
 
+
+
+# --------------------------------------------------------
+# Basic image inversion
+# -------------------------------------------------------
+def iminvert(read,write,image_type = 'tif', refer = 'ref'):
+
+    print(f'\nWill save to:{write}...\n')
+    time.sleep(5)
+
+    '''
+    Reads files from folder, inverts black and white and saves greyscale
+    '''
+    if refer.lower() == 'ref':
+        image_files = sorted(
+            [f for f in os.listdir(read) if f.endswith(f".{image_type}") and f.split('_')[0].isdigit() and int(f.split('_')[0]) % 2 == 0],
+            key = lambda x: int(x.split('_')[0])
+        )
+    else:
+        image_files = sorted(
+            [f for f in os.listdir(read) if f.endswith(f".{image_type}") and f.split('_')[0].isdigit() and int(f.split('_')[0]) % 2 != 0],
+            key = lambda x: int(x.split('_')[0])
+        )
+
+    for file_name in image_files: 
+        read_path = os.path.join(read, file_name)
+        # image = cv2.imread(read_path, cv2.IMREAD_GRAYSCALE)
+        image = readImage(read_path)
+        
+        # Invert the image (255 - pixel value)
+        inverted_image = np.max(image) - image
+        
+        # Create new filename with "_inverted" suffix
+        base_name = os.path.splitext(file_name)[0]  # Extract extension
+        new_name = f"{base_name}_inverted.{image_type}"
+        new_path = os.path.join(write, new_name)
+        
+        # Save the inverted image
+        cv2.imwrite(new_path, inverted_image)
+        print(f"Renamed: {file_name} → {new_name}")
+
+    return None
+
+
+
+# ---------------------------------------------
+# Displacement field visualisation
+# --------------------------------------------
+def visualize_displacement_field(dx, dy):
+    """
+    Visualize the displacement field. Takes dx, dy sampled in the
+    interpolators and creates subplots of the displacement field
+
+    parameters:
+        - dx: ndarry
+        - dy: ndarry
+    
+    returns:
+        ndarry (image)
+    """
+    fig, (ax1,ax2,ax3) = plt.subplots(3, figsize=(8, 8))
+    
+    # Plot dx field
+    im1 = ax1.imshow(dx, cmap='jet')
+    ax1.set_title('X Displacement Field')
+    plt.colorbar(im1, ax=ax1)
+    
+    # Plot dy field
+    im2 = ax2.imshow(dy, cmap='jet')
+    ax2.set_title('Y Displacement Field')
+    plt.colorbar(im2, ax=ax2)
+  
+    # Plot displacement magnitude
+    magnitude = np.sqrt(dx**2 + dy**2)
+    im3 = ax3.imshow(magnitude, cmap='jet')
+    ax3.set_title('Displacement Magnitude')
+    plt.colorbar(im3, ax=ax3)
+    
+    plt.tight_layout()
+
+    # Make the figure an image
+    figg = fig_to_image(fig)
+    return figg
+
+
+# ----------------------------------------------
+# COnvert matplotlib figure to ndarry
+# ----------------------------------------------
+def fig_to_image(fig):
+
+    """Convert a matplotlib figure to a NumPy array to save them as separate images.
+       BytesIO is a class from Python's built-in io module that creates an in-memory binary stream
+       Defined as a separate function to avoid issues with matplotlib. 
+
+       https://stackoverflow.com/questions/35355930/figure-to-image-as-a-numpy-array
+    """
+    # Create a buffer to hold the image data. In other words, a temporary memory location.
+    buffer = BytesIO()
+
+    # Save the figure to the buffer
+    fig.savefig(buffer, format='png', dpi=300)
+
+    # Read back from byte stream
+    buffer.seek(0)
+    img = pillow_image.open(buffer)
+    img_array = np.array(img)
+    buffer.close()
+    return img_array
+
+
+
+# --------------------------------------------------
+# Basic thresholding (multiple images in a folder)
+# -------------------------------------------------
+def imthresh(read,write,image_type='tif', refer='ref', keep_name = False):
+
+    print(f'\nProcess will save to:{write}...\n')
+    time.sleep(5)
+    '''
+    Reads files from folder, applies threshold and saves them in a different folder
+    '''
+
+    # Qualify using specified file extension and...
+    # If reference images then expect even prefix
+    if refer.lower() == 'ref':
+        image_files = sorted(
+            [f for f in os.listdir(read) if f.endswith(f".{image_type}") 
+             and f.split('_')[0].isdigit() 
+             and int(f.split('_')[0]) % 2 == 0],
+            key = lambda x: int(x.split('_')[0]))
+    
+    # If deformed images then odd numbered prefix
+    elif refer.lower() == 'def':
+        image_files = sorted(
+            [f for f in os.listdir(read) if f.endswith(f".{image_type}") 
+             and f.split('_')[0].isdigit() 
+             and int(f.split('_')[0]) % 2 != 0],
+            key = lambda x: int(x.split('_')[0]))
+    else:
+        image_files = sorted(
+            [f for f in os.listdir(read) if f.endswith(f".{image_type}") and f.split('_')[0].isdigit()],
+            key = lambda x: int(x.split('_')[0]))
+
+    for file_name in image_files:
+        read_path = os.path.join(read,file_name)
+        image = readImage(read_path)
+
+        # Apply Otsu thresh (Otsu's method determines an optimal global threshold value from the image histogram)
+        # It actually finds a value of t which lies in between two [histogram] peaks such that variances to both classes are minimal
+        # Create new filename with "_inverted" suffix
+        base_name = os.path.splitext(file_name)[0]  # Remove extension
+        if keep_name:
+            new_name = f"{base_name}.{image_type}"
+        else:
+            new_name = f"{base_name}_threshold.{image_type}"    
+
+        print(f"| Binarised: {file_name} → {new_name}")   
+        # Save the inverted image
+        # Threshold value is set to 0 for Otsu thresholding
+        _, thresh1 = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + 
+                                            cv2.THRESH_OTSU) 
+        new_path = os.path.join(write,new_name)
+        cv2.imwrite(new_path, thresh1)
+
+    print('\nImage processing completed successfully')
+
+    return None
+
+
+#----------------------------------------
+# Construct image matrix
+#-----------------------------------------
+def create_image_matrix(image_paths, image_indices, output_path, figsize=(15, 10), dpi=300):
+    """
+    Creates a 2x3 subplot of images using OpenCV for loading.
+    
+    Args:
+        image_paths (list): List of directories or full image paths
+        image_indices (list): 6-element list of indices/filenames
+        output_path (str): Output file path
+        figsize (tuple): Figure size (width, height)
+        dpi (int): Output resolution
+    """
+    if len(image_indices) != 6:
+        raise ValueError("Exactly 6 image indices required")
+
+    fig, axes = plt.subplots(2, 3, figsize=figsize)
+    axes = axes.ravel()
+
+    for idx, (ax, img_ref) in enumerate(zip(axes, image_indices)):
+        try:
+            # Handle both directory paths and direct image paths
+            if os.path.isdir(image_paths[idx]):
+                # Get all valid images in directory
+                tif_files = get_image_strings(image_paths[idx], imagetype='tif')
+                png_files = get_image_strings(image_paths[idx], imagetype='png')
+                all_files = sorted(tif_files + png_files, 
+                                 key=lambda x: int(x.split('_')[0]))
+                
+                if isinstance(img_ref, int):  # Index reference
+                    img_path = os.path.join(image_paths[idx], all_files[img_ref])
+                else:  # Filename reference
+                    img_path = os.path.join(image_paths[idx], img_ref)
+            else:  # Direct image path
+                img_path = image_paths[idx]
+
+            # Load image with OpenCV
+            img = cv2.imread(img_path, cv2.IMREAD_ANYDEPTH | cv2.IMREAD_ANYCOLOR)
+            
+            if img is None:
+                raise ValueError(f"Failed to load {img_path}")
+
+            # Convert BGR to RGB for color images
+            if len(img.shape) == 3 and img.shape[2] == 3:
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            elif len(img.shape) == 3 and img.shape[2] == 4:
+                img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
+
+            # Normalize 16-bit images
+            if img.dtype == np.uint16:
+                img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+
+            # Plot
+            ax.imshow(img, cmap='gray' if len(img.shape) == 2 else None)
+            ax.set_title(os.path.basename(img_path), fontsize=8)
+            ax.axis('off')
+
+        except Exception as e:
+            print(f"Error loading {img_ref} from {image_paths[idx]}: {str(e)}")
+            ax.text(0.5, 0.5, "Image not found", ha='center', va='center')
+            ax.axis('off')
+
+    plt.tight_layout(pad=1.0)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    plt.savefig(output_path, dpi=dpi, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {output_path}")
 
 # =========================================================================
 # SPECKLE PATTERN EVALUATION METRICS/TOOLS
@@ -1206,6 +1524,57 @@ def expected_prefixes(files_folder, odd=False, skip=True):
     return all_expected_prefix
 
 
+
+
+# ------------------------------------------
+# Rename images in a folder
+# ------------------------------------------
+def rename_img(image_folder, image_type='tif', new_name='Generated_spec_image.tif', parity='even'):
+    print('\nRenaming files...')
+    """
+    Function renames the contents of the deformed images folder to the form
+    required by the DICAnalyser.
+    Skips renaming if the target file already exists.
+    """
+    # Get image string list
+    if parity.lower() == 'even':
+        image_files = sorted(
+            [f for f in os.listdir(image_folder)
+             if f.endswith(f".{image_type}") and f.split('_')[0].isdigit() and int(f.split('_')[0]) % 2 == 0],
+            key=lambda x: int(x.split('_')[0]))
+    
+    # or qualify by odd numbered prefix
+    elif parity.lower() == 'odd':
+        image_files = sorted(
+            [f for f in os.listdir(image_folder)
+             if f.endswith(f".{image_type}") and f.split('_')[0].isdigit() and int(f.split('_')[0]) % 2 != 0],
+            key=lambda x: int(x.split('_')[0]))
+        
+    else:
+        raise Exception("Invalid parity input")
+    
+    # Rename each image
+    for img_file in image_files:
+        deform_num = int(img_file.split('_')[0])
+        new_filename = f"{deform_num}_{new_name}"
+
+        old_path = os.path.join(image_folder, img_file)
+        new_path = os.path.join(image_folder, new_filename)
+
+        if new_path == old_path:
+            continue  # Skip if already named correctly
+
+        if os.path.exists(new_path):
+            print(f"Skipped (already exists): {new_filename}")
+            continue  # Skip if target file already exists
+
+        os.rename(old_path, new_path)
+        print(f"Renamed: {img_file} → {new_filename}")
+
+    return None
+
+
+
 # =========================================================================
 # PATTERN GENERATION AND SAMPLING METHODS
 # =========================================================================
@@ -1690,6 +2059,7 @@ def generate_perlin_pair(h, w, dx_field, dy_field, excel_path, ref_image_save,
         if seed is not None:
             np.random.seed(seed)
         
+        # Build noise
         scale = perlin_lhs_values[sample_idx, 0]
         octaves = int(round(perlin_lhs_values[sample_idx, 1]))
         persistence = perlin_lhs_values[sample_idx, 2]
@@ -1728,12 +2098,11 @@ def generate_perlin_pair(h, w, dx_field, dy_field, excel_path, ref_image_save,
                                     base=base_seed)
         
 
-        # Normalise images to [0, 255]
+        # Normalise images to [0, 255] 
         # As unsigned integer 8-bit
+        # (FYI: noise is theoretically on [-1,1] but ive seen that its usually [-0.7,0.7])
         global_min = min(template.min(), deformed.min())
         global_max = max(template.max(), deformed.max())
-        
-        
         template = np.round((template - global_min) / (global_max - global_min) * 255).astype(np.uint8)
         deformed = np.round((deformed - global_min) / (global_max - global_min) * 255).astype(np.uint8)
 
@@ -2247,8 +2616,9 @@ def subpixel_analysis(translation_bin_folder, save_figure = None,
     return error_matrix, figure
 
 
-
-# ---------------------------------------------------------------------------------------------
+# -------------------------------------------------------
+# For masking
+# -------------------------------------------------------
 def array_difference_outlier(array_1, array_2, thresh):
     """
     Compares two arrays element-by-element and returns the indices where
@@ -2273,347 +2643,6 @@ def array_difference_outlier(array_1, array_2, thresh):
 
     return outlier_idx
 
-
-# ---------------------------------------------------------------------------------------------
-def smooth_field(matrix, source_points, destination_points, kern):
-
-    '''
-    This functioin uses radial basis function interpolation to generate a smooth displacement field from
-    shifted nodal locations (source and destination points) which are mapped to a grid made by image dimensions. 
-    It is assumed that the shifted coordinates are on the same scale as the image that is used to define 
-    the grid and that they have the same aspect ratio.
-
-    Input: matrix -> Image used to size grid
-           source points -> 2D matrix, original xy coordinates
-           destination points -> 2D matrix, new xy coordinates
-    '''
-    h, w = matrix.shape[:2]  
-
-    # Create a grid of coordinates (destination grid). The grid size is based on the image dimensions.
-    # The grid will be used to obtain the remap coordinates for the deformed image.
-    grid_x, grid_y = np.meshgrid(np.arange(w), np.arange(h))
-    grid_x_flatten = grid_x.flatten()
-    grid_y_flatten = grid_y.flatten()
-
-    ''' 
-    The type of RBF that is used to interpolate the displacement field is described by the `kernel` parameter.
-    The following kernels are available:
-    Kernels: thin_plate_spline 
-            linear
-            cubic
-            quintic
-
-    `epsilon` must be specified if `kernel` is not one of {'quintic', 'cubic', 'thin_plate_spline', 'linear'}.
-    Shape parameter that scales the input to the RBF. If `kernel` is
-        'linear', 'thin_plate_spline', 'cubic', or 'quintic', this defaults to
-        1 and can be ignored because it has the same effect as scaling the
-        smoothing parameter. Otherwise, this must be specified.   
-    The kernel parameter is selected through the last argument of the function.       
-    '''
-    kernel_options = {1: 'thin_plate_spline', 
-                      2: 'linear', 
-                      3: 'cubic', 
-                      4: 'quintic'}
-
-    print("Generating displacement field.  Running TPS interpolation with kernel: ", kernel_options.get(kern))
-
-    kerne = kernel_options.get(kern)
-    if kerne is None:
-        raise ValueError("Invalid kernel option. Use 1 for thin_plate_spline, 2 for linear, 3 for cubic, or 4 for quintic.")
-
-    # Create interpolators for both XY directions
-    rbf_interpolator_x = RBFInterpolator(source_points, 
-                                         destination_points[:, 0] - source_points[:, 0], 
-                                         kernel=kerne)
-    
-    rbf_interpolator_y = RBFInterpolator(source_points, 
-                                         destination_points[:, 1] - source_points[:, 1], 
-                                         kernel=kerne)
-    '''
-    Apply RBF interpolation to get a smooth displacement field. The displacement field x and y components are 
-    reshaped to the image dimensions by stacking the grid coordinates and then reshaping the result. The displacement
-    field is interpolated at the grid coordinates.
-    '''
-    # Sample at pixel coordinates. 
-    dx = rbf_interpolator_x(np.column_stack([grid_x_flatten, grid_y_flatten])).reshape(h, w)
-    dy = rbf_interpolator_y(np.column_stack([grid_x_flatten, grid_y_flatten])).reshape(h, w)
-
-    return dx, dy, rbf_interpolator_x, rbf_interpolator_y
-
-
-# ---------------------------------------------------------------------------------------------
-def fig_to_image(fig):
-
-    """Convert a matplotlib figure to a NumPy array to save them as separate images.
-       BytesIO is a class from Python's built-in io module that creates an in-memory binary stream
-       Defined as a separate function to avoid issues with matplotlib. 
-
-       https://stackoverflow.com/questions/35355930/figure-to-image-as-a-numpy-array
-    """
-    # Create a buffer to hold the image data. In other words, a temporary memory location.
-    buffer = BytesIO()
-
-    # Save the figure to the buffer
-    fig.savefig(buffer, format='png', dpi=300)
-
-    # Read back from byte stream
-    buffer.seek(0)
-    img = pillow_image.open(buffer)
-    img_array = np.array(img)
-    buffer.close()
-    return img_array
-
-
-
-# ---------------------------------------------------------------------------------------------
-def visualize_displacement_field(dx: np.ndarray, dy: np.ndarray):
-    """
-    Visualize the displacement field and control points. Takes dx, dy sampled in the
-    interpolators and creates subplots of the displacement field
-
-    The resulting figure will be saved if a path is provided
-    """
-    fig, (ax1,ax2,ax3) = plt.subplots(3, figsize=(8, 8))
-    
-    # Plot dx field
-    im1 = ax1.imshow(dx, cmap='jet')
-    ax1.set_title('X Displacement Field')
-    plt.colorbar(im1, ax=ax1)
-    
-    # Plot dy field
-    im2 = ax2.imshow(dy, cmap='jet')
-    ax2.set_title('Y Displacement Field')
-    plt.colorbar(im2, ax=ax2)
-  
-    # Plot displacement magnitude
-    magnitude = np.sqrt(dx**2 + dy**2)
-    im3 = ax3.imshow(magnitude, cmap='jet')
-    ax3.set_title('Displacement Magnitude')
-    plt.colorbar(im3, ax=ax3)
-    
-    plt.tight_layout()
-
-    # Make the figure an image
-    figg = fig_to_image(fig)
-    return figg
-
-
-
-# ---------------------------------------------------------------------------------------------
-def show_field(matrix, source_points, destination_points, path=None):
-
-    """
-    Function interpolates a set of discrete points, which form part of a displacement field, on an image
-    grid. There is an option to save the figure should it be desired.
-
-    Input: Image matrix (gray)
-           source points
-           Destination points
-           path string
-
-    Output: Figure
-
-    """
-    dx, dy,_,_ = smooth_field(matrix, source_points, destination_points, 3)
-
-    # Get the figure from your existing function
-    fig = visualize_displacement_field(dx, dy)
-
-    # Save the returned figure
-    if path is not None:
-
-        fig_path = path
-        name = 'Displacement_field.png'
-        save_path = os.path.join(fig_path, name)
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    
-    return fig
-
-
-
-# ---------------------------------------------------------------------------------------------
-
-def show_strain_field(matrix, source_points, destination_points, path=None, pixel_size=1.0):
-    """
-    Function interpolates displacement field and computes von Mises strain.
-    
-    Input: Image matrix (gray)
-           source points
-           destination points  
-           path string
-           pixel_size: physical size per pixel (default=1.0 for normalized coordinates)
-           
-    Output: Figure showing von Mises strain field
-    """
-    dx, dy, _, _ = smooth_field(matrix, source_points, destination_points, 3)
-    
-    # Compute strain tensor components
-    # np.gradient returns gradients in the order of array dimensions
-    # For 2D array: np.gradient(arr) returns [∂arr/∂row, ∂arr/∂col] = [∂arr/∂y, ∂arr/∂x]
-    
-    # Calculate gradients (spatial derivatives)
-    from scipy.ndimage import gaussian_filter
-
-    dx = gaussian_filter(dx, sigma=1.0)
-    dy = gaussian_filter(dy, sigma=1.0)
-    dux_dy, dux_dx = np.gradient(dx, pixel_size, pixel_size)  # gradients of x-displacement
-    duy_dy, duy_dx = np.gradient(dy, pixel_size, pixel_size)  # gradients of y-displacement
-    
-    # Strain tensor components (small strain theory)
-    exx = dux_dx  # ∂ux/∂x (normal strain in x direction)
-    eyy = duy_dy  # ∂uy/∂y (normal strain in y direction)  
-    exy = 0.5 * (dux_dy + duy_dx)  # ½(∂ux/∂y + ∂uy/∂x) (engineering shear strain)
-    
-    # Calculate von Mises strain (equivalent strain)
-    # For plane strain: εeq = √(εxx² + εyy² - εxx*εyy + 3*εxy²)
-    von_mises_strain = np.sqrt(exx**2 + eyy**2 - exx*eyy + 3*exy**2)
-    
-    # Alternative calculation if you want to be more explicit about the full strain tensor
-    # von_mises_strain = np.sqrt(((exx - eyy)**2 + exx**2 + eyy**2 + 6*exy**2) / 2)
-    
-    # Visualize von Mises strain
-    fig = visualize_displacement_field(von_mises_strain, np.zeros_like(von_mises_strain))
-    
-    if path is not None:
-        fig_path = path
-        name = 'Von_Mises_Strain_field.png'
-        save_path = os.path.join(fig_path, name)
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    
-    return fig
-
-
-# ---------------------------------------------------------------------------------------------
-def imthresh(read,write,image_type='tif', refer='ref', keep_name = False):
-    print(f'\nProcess will save to:{write}...\n')
-    time.sleep(5)
-    '''
-    Reads files from folder, applies threshold and saves in a different folder
-    '''
-    if refer.lower() == 'ref':
-        image_files = sorted(
-            [f for f in os.listdir(read) if f.endswith(f".{image_type}") and f.split('_')[0].isdigit() and int(f.split('_')[0]) % 2 == 0],
-            key = lambda x: int(x.split('_')[0]))
-    elif refer.lower() == 'def':
-        image_files = sorted(
-            [f for f in os.listdir(read) if f.endswith(f".{image_type}") and f.split('_')[0].isdigit() and int(f.split('_')[0]) % 2 != 0],
-            key = lambda x: int(x.split('_')[0]))
-    else:
-        image_files = sorted(
-            [f for f in os.listdir(read) if f.endswith(f".{image_type}") and f.split('_')[0].isdigit()],
-            key = lambda x: int(x.split('_')[0]))
-
-    for file_name in image_files:
-        read_path = os.path.join(read,file_name)
-        # image = cv2.imread(read_path, cv2.IMREAD_GRAYSCALE)
-        image = readImage(read_path)
-
-        # Apply Otsu thresh (Otsu's method determines an optimal global threshold value from the image histogram)
-        # It actually finds a value of t which lies in between two [histogram] peaks such that variances to both classes are minimal
-        # Create new filename with "_inverted" suffix
-        base_name = os.path.splitext(file_name)[0]  # Remove extension
-        if keep_name:
-            new_name = f"{base_name}.{image_type}"
-        else:
-            new_name = f"{base_name}_threshold.{image_type}"    
-
-        print(f"Binarised: {file_name} → {new_name}")   
-        # Save the inverted image
-        # Threshold value is set to 0 for Otsu thresholding
-        _, thresh1 = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + 
-                                            cv2.THRESH_OTSU) 
-        new_path = os.path.join(write,new_name)
-        cv2.imwrite(new_path, thresh1)
-
-    print('\nImage processing completed successfully')
-
-    return None
-
-
-# ---------------------------------------------------------------------------------------------
-def iminvert(read,write,image_type = 'tif', refer = 'ref'):
-
-    print(f'\nWill save to:{write}...\n')
-    time.sleep(5)
-
-    '''
-    Reads files from folder, inverts black and white and saves greyscale
-    '''
-    if refer.lower() == 'ref':
-        image_files = sorted(
-            [f for f in os.listdir(read) if f.endswith(f".{image_type}") and f.split('_')[0].isdigit() and int(f.split('_')[0]) % 2 == 0],
-            key = lambda x: int(x.split('_')[0])
-        )
-    else:
-        image_files = sorted(
-            [f for f in os.listdir(read) if f.endswith(f".{image_type}") and f.split('_')[0].isdigit() and int(f.split('_')[0]) % 2 != 0],
-            key = lambda x: int(x.split('_')[0])
-        )
-
-    for file_name in image_files: 
-        read_path = os.path.join(read, file_name)
-        # image = cv2.imread(read_path, cv2.IMREAD_GRAYSCALE)
-        image = readImage(read_path)
-        
-        # Invert the image (255 - pixel value)
-        inverted_image = np.max(image) - image
-        
-        # Create new filename with "_inverted" suffix
-        base_name = os.path.splitext(file_name)[0]  # Extract extension
-        new_name = f"{base_name}_inverted.{image_type}"
-        new_path = os.path.join(write, new_name)
-        
-        # Save the inverted image
-        cv2.imwrite(new_path, inverted_image)
-        print(f"Renamed: {file_name} → {new_name}")
-
-    return None
-
-
-
-# ---------------------------------------------------------------------------------------------
-def rename_img(image_folder, image_type='tif', new_name='Generated_spec_image.tif', parity='even'):
-    print('\nRenaming files...')
-    """
-    Function renames the contents of the deformed images folder to the form
-    required by the DICAnalyser.
-    Skips renaming if the target file already exists.
-    """
-    # Get image string list
-    if parity.lower() == 'even':
-        image_files = sorted(
-            [f for f in os.listdir(image_folder)
-             if f.endswith(f".{image_type}") and f.split('_')[0].isdigit() and int(f.split('_')[0]) % 2 == 0],
-            key=lambda x: int(x.split('_')[0]))
-        
-    elif parity.lower() == 'odd':
-        image_files = sorted(
-            [f for f in os.listdir(image_folder)
-             if f.endswith(f".{image_type}") and f.split('_')[0].isdigit() and int(f.split('_')[0]) % 2 != 0],
-            key=lambda x: int(x.split('_')[0]))
-        
-    else:
-        raise Exception("Invalid parity input")
-    
-    # Rename each image
-    for img_file in image_files:
-        deform_num = int(img_file.split('_')[0])
-        new_filename = f"{deform_num}_{new_name}"
-
-        old_path = os.path.join(image_folder, img_file)
-        new_path = os.path.join(image_folder, new_filename)
-
-        if new_path == old_path:
-            continue  # Skip if already named correctly
-
-        if os.path.exists(new_path):
-            print(f"Skipped (already exists): {new_filename}")
-            continue  # Skip if target file already exists
-
-        os.rename(old_path, new_path)
-        print(f"Renamed: {img_file} → {new_filename}")
-
-    return None
 
 
 #-----------------------------------------------------------------------------------------------
@@ -2661,7 +2690,9 @@ def ordered_prefix(folder_with_images,refer = 'ref', image_type = 'tif', start_a
     return None
 
 
-#-----------------------------------------------------------------------------------------------
+#---------------------------------------------
+# Change file string prefix parity
+# --------------------------------------------
 def change_prefix_parity(image_folder, image_type='tif',new_name='Generated_spec_image.tif'):
 
     # change the name to 'swap_prefix'
@@ -2696,7 +2727,9 @@ def change_prefix_parity(image_folder, image_type='tif',new_name='Generated_spec
     return None
 
 
-# ---------------------------------------------------------------------------------------------
+# ----------------------------------------------------
+# Move files between folders
+# ----------------------------------------------------
 def move_files(read, write, image_type='tif', suffix='threshold_threshold'):
 
     print(f'\nWill save to:{write}...\n')
@@ -2721,7 +2754,9 @@ def move_files(read, write, image_type='tif', suffix='threshold_threshold'):
     return None
 
 
-# ---------------------------------------------------------------------------------------------
+# ------------------------------------------------
+# Read image file
+# ------------------------------------------------
 def readImage(path_to_imgFile):
     """
     Read an image file and convert it to grayscale.
@@ -2749,7 +2784,12 @@ def readImage(path_to_imgFile):
     return grayImg
 
 
-# ---------------------------------------------------------------------------------------------
+# ========================================================================
+# MISCELLENOUS / ODD JOBS
+# ========================================================================
+#---------------------------------------------------------
+# Load data from FE setup and results file
+# -------------------------------------------------------
 def load_fe_nodes(bdf_path, op2_path, showmesh=False):
 
     """
@@ -2802,11 +2842,16 @@ def load_fe_nodes(bdf_path, op2_path, showmesh=False):
 
     return nodes_2d, deformed_nodes_2d
 
-#------------------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------
+# PATH TO EXCEL FILE
+# -----------------------------------------------------------------------------
 def excel_doc_path(excel_path, doc_name = "Pattern_evaluation", override_doc_num = None):
     '''
     Reads the existing excel documents in folder
     and returns the path to the most recent document
+
+    Parameters: 
+        - Excel path: string describing path to excel
     '''
     # Ensure the Excel directory exists
     if not os.path.exists(excel_path):
@@ -2815,11 +2860,13 @@ def excel_doc_path(excel_path, doc_name = "Pattern_evaluation", override_doc_num
     existing_files = [f for f in os.listdir(excel_path)
                     if f.startswith(doc_name) and f.endswith(".xlsx")]
     
+    # IF the user chooses a specific file number
     if override_doc_num is not None:
 
         doc_number = override_doc_num
         print("Current doc_number:", doc_number)
 
+    # Else choose the most recent file (assuming no missing files in folder)
     else:
         doc_number = len(existing_files)
         print("Current doc_number:", doc_number)
@@ -2830,9 +2877,33 @@ def excel_doc_path(excel_path, doc_name = "Pattern_evaluation", override_doc_num
     return exl_file_path
 
 
-#------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------
+# READ EXCEL FILE
+#-----------------------------------------------------------------
 def read_spec_excel(excel_folder, doc_num=None, doc_name='Pattern_evaluation', print_doc=True):
+    """
+    Read data from excel sheet. (Project specific)
 
+    This function is for reading excel files that were generated dynamically through
+    the scripts in this projects. It assumes that the first seven columns store pattern metric results,
+    the next four contain errors, the next eight contain error results and the last five contain 
+    the pattern generation parameters.
+
+    Parameters:
+        - excel_folder: string - path to excel document folder
+        - doc_num: int - used for opening specific file. If None then 
+                    the most recent one is opened
+        - doc_name: string - base file name
+
+
+    Returns:
+        - p_metrics: ndarry metrics
+        - meas_error: ndarry errors
+        - p_param: ndarry pattern parameters
+        - nans: ndarray nan percentages
+        - indicators: string
+
+    """
     existing_files = [f for f in os.listdir(excel_folder)
                         if f.startswith(doc_name) and f.endswith(".xlsx")]
     
@@ -2919,9 +2990,9 @@ def read_spec_excel(excel_folder, doc_num=None, doc_name='Pattern_evaluation', p
         # Read error values
         '''
         Index:       0. RMSE(dic)
-                     1. MAPE(dic),
+                     1. IQR(dic),
                      2. RSME(fe)
-                     3 MAPE(fe), 
+                     3 IQR(fe), 
                      4 Mean error (dic)
                      5 Mean error (fe), 
                      6 Standard deviation error(dic)
@@ -3039,9 +3110,9 @@ def write_spec_excel(excel_path, p_metrics, meas_error, p_param, nans, indicator
 
 
 
-#------------------------------------------------------------------------------------------------
-import matplotlib.pyplot as plt
-
+#------------------------------------------------------------
+# Show flag status
+#------------------------------------------------------------
 def flag_status(flags_dict, wait_time=5):
     """
     Displays a single bar chart representing all boolean flags.
@@ -3089,9 +3160,25 @@ def flag_status(flags_dict, wait_time=5):
 
 
 
-#---------------------------------------------------------------------------------------------------
-def gaussian_blur_images(image_folder, size = 5, sig_y = 0, image_type = 'tif', name_change = 'no', par = 'none'):
+#------------------------------------------------------------
+# Apply Gaussian blur to images
+#-----------------------------------------------------------
+def gaussian_blur_images(image_folder, size = 5, sig_y = 0, 
+                         image_type = 'tif', name_change = 'no', par = 'none'):
 
+    """
+    Apply Gaussian blur to images in a folder
+
+    Parameters:
+        - image_folder: string - path to images folder
+        - size: in - kernel size
+        - sig_y: standard deviation
+        - image_type: string - file extension
+        - name_change: string - toggle file name change after being processed
+       
+    Returns:
+        - ndarry: processed image
+    """
     # FIles
     image_strings = get_image_strings(image_folder,parity=par)
     # Box
@@ -3121,7 +3208,9 @@ def gaussian_blur_images(image_folder, size = 5, sig_y = 0, image_type = 'tif', 
 
 
 
-#---------------------------------------------------------------------------------------------------
+#----------------------------------------------------------------------
+# Gaussian noise to images
+#---------------------------------------------------------------------
 def gaussian_noise_images(image_folder, mean=0, std=1, image_type='tif', name_change='no', par='none'):
 
     """
@@ -3169,59 +3258,15 @@ def gaussian_noise_images(image_folder, mean=0, std=1, image_type='tif', name_ch
         print(f"Gaussian noise (μ={mean}, σ={std}): {string} → {new_name}")
 
  
-def random_pixel_background_noise(image_folder, min_val=115, max_val=255, image_type='tif', name_change='no', par='none'):
-    """
-    Superimpose random pixel noise onto the background (white areas) of speckle pattern images.
-
-    Parameters:
-    - image_folder: Path to folder containing images
-    - min_val: Minimum noise value (inclusive)
-    - max_val: Maximum noise value (inclusive)
-    - image_type: Output image format (default: 'tif')
-    - name_change: Whether to modify filename ('yes'/'no', default: 'no')
-    - par: Parity parameter for image selection (default: 'none')
-    """
-    image_strings = get_image_strings(image_folder, parity=par)
-
-    for string in image_strings:
-        image_path = os.path.join(image_folder, string)
-        if not os.path.exists(image_path):
-            raise Exception(f'Image not found\nCould not find {image_path}')
-        
-        # Read the image
-        read_image = readImage(image_path).astype(np.uint16)  # avoid overflow during addition
-
-        # Create a mask of background pixels (assuming white background ≈ 255)
-        background_mask = read_image >= 200  # threshold can be tuned if images are imperfect
-
-        # Generate random noise only for the background pixels
-        random_noise = np.zeros_like(read_image, dtype=np.uint16)
-        random_noise[background_mask] = np.random.randint(min_val, max_val + 1, size=np.count_nonzero(background_mask))
-
-        # Superimpose noise only where background is present
-        modified_image = read_image + random_noise
-
-        # Clip to [0, 255] and convert back to uint8
-        modified_image = np.clip(modified_image, 0, 255).astype(np.uint8)
-
-        # Generate output filename
-        base_name = os.path.splitext(string)[0]
-        if name_change.lower() == 'yes':
-            new_name = f"{base_name}_bkgdnoise_{min_val}_{max_val}.{image_type}"
-        else:
-            new_name = f"{base_name}.{image_type}"
-
-        new_path = os.path.join(image_folder, new_name)
-
-        # Save the image
-        cv2.imwrite(new_path, modified_image)
-        print(f"Background noise ({min_val}–{max_val}): {string} → {new_name}")
 
 
+# --------------------------------------------------------------------
+# Recursive Texture Generation (RTG)
+# --------------------------------------------------------------------
+# I wrote this when we were still calling them Turing Patterns
 
-
-
-def make_turing(image_or_folder, rep=50, radius=1, sharpen_percent=500, size=None, replace=True, par='even'):
+def make_turing(image_or_folder, rep=50, radius=1, sharpen_percent=500, 
+                size=None, replace=True, par='even'):
     """
     Converts images to pseudo-Turing patterns using blurring and sharpening.
 
@@ -3283,8 +3328,13 @@ def make_turing_single(image_path, rep=25, radius=1, sharpen_percent=250, size=N
     return img
 
 
-#----------------------------------------------------------------------------------------------------
+#============================================================================
+# FREQUENCY SPACE METHODS
+#============================================================================
+
+#--------------------------------------------------------------
 # Spectral analysis of digital images
+# -------------------------------------------------------------
 # Image power spectrum (https://www.cs.unm.edu/~brayer/vision/fourier.html)
 def compute_fft_and_freq(image):
     '''
@@ -3301,7 +3351,8 @@ def compute_fft_and_freq(image):
 
     rows, cols = image.shape
     fft2d = np.fft.fft2(image)              # Compute unnormalised FFT
-    fft2d_shifted = np.fft.fftshift(fft2d)  # Shift the zero frequency (mean grey value) to the center of the image spectrum
+    # Shift the zero frequency (mean grey value) to the center of the image spectrum
+    fft2d_shifted = np.fft.fftshift(fft2d)  
     magnitude = np.abs(fft2d_shifted)
     power = magnitude ** 2
 
@@ -3312,7 +3363,9 @@ def compute_fft_and_freq(image):
     return magnitude, power, fx, fy
 
 
-
+#-------------------------------------------------
+# Area under power spectrum using Simpsons Method
+#-------------------------------------------------
 def integrate_power_2d(power, fx, fy):
     """
     2D integration using Simpson's rule
@@ -3324,7 +3377,9 @@ def integrate_power_2d(power, fx, fy):
     integral = simpson(simpson(power, dx=dfx, axis=1), dx=dfy, axis=0)
     return integral
 
-
+#------------------------------------------------------
+# Plot 1D representation of power spectrum
+#-------------------------------------------------------
 def plot_1d_spectra(magnitude, power, fx, fy, subplot=False, show=True):
     
     # Extract x and y slices through the centre of the 2D spectrum and 2D power spectrum
@@ -3375,7 +3430,6 @@ def plot_1d_spectra(magnitude, power, fx, fy, subplot=False, show=True):
         plt.show()
 
     return fig
-
 
 
 
@@ -3558,8 +3612,9 @@ def spec_power_superimpose(image_list, plot_type = "semilogy", plot=False):
     return plt.gcf()
 
 
-#----------------------------------------------------------------------------------
+#----------------------------------------------
 # Interpolation bias error prediction
+#----------------------------------------------
 def compute_bias_prediction(img, plot_spectrum=False, algorithm='FA-NR'):
     """
     Computes bias prediction from a speckle image using transfer functions.
@@ -3659,73 +3714,6 @@ def C_nb(img, plot_spectrum=False, algorithm='FA-NR'):
     
 
 
-#------------------------------------------------------------------------------------------
-# Image matrix
-def create_image_matrix(image_paths, image_indices, output_path, figsize=(15, 10), dpi=300):
-    """
-    Creates a 2x3 subplot of images using OpenCV for loading.
-    
-    Args:
-        image_paths (list): List of directories or full image paths
-        image_indices (list): 6-element list of indices/filenames
-        output_path (str): Output file path
-        figsize (tuple): Figure size (width, height)
-        dpi (int): Output resolution
-    """
-    if len(image_indices) != 6:
-        raise ValueError("Exactly 6 image indices required")
-
-    fig, axes = plt.subplots(2, 3, figsize=figsize)
-    axes = axes.ravel()
-
-    for idx, (ax, img_ref) in enumerate(zip(axes, image_indices)):
-        try:
-            # Handle both directory paths and direct image paths
-            if os.path.isdir(image_paths[idx]):
-                # Get all valid images in directory
-                tif_files = get_image_strings(image_paths[idx], imagetype='tif')
-                png_files = get_image_strings(image_paths[idx], imagetype='png')
-                all_files = sorted(tif_files + png_files, 
-                                 key=lambda x: int(x.split('_')[0]))
-                
-                if isinstance(img_ref, int):  # Index reference
-                    img_path = os.path.join(image_paths[idx], all_files[img_ref])
-                else:  # Filename reference
-                    img_path = os.path.join(image_paths[idx], img_ref)
-            else:  # Direct image path
-                img_path = image_paths[idx]
-
-            # Load image with OpenCV
-            img = cv2.imread(img_path, cv2.IMREAD_ANYDEPTH | cv2.IMREAD_ANYCOLOR)
-            
-            if img is None:
-                raise ValueError(f"Failed to load {img_path}")
-
-            # Convert BGR to RGB for color images
-            if len(img.shape) == 3 and img.shape[2] == 3:
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            elif len(img.shape) == 3 and img.shape[2] == 4:
-                img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
-
-            # Normalize 16-bit images
-            if img.dtype == np.uint16:
-                img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-
-            # Plot
-            ax.imshow(img, cmap='gray' if len(img.shape) == 2 else None)
-            ax.set_title(os.path.basename(img_path), fontsize=8)
-            ax.axis('off')
-
-        except Exception as e:
-            print(f"Error loading {img_ref} from {image_paths[idx]}: {str(e)}")
-            ax.text(0.5, 0.5, "Image not found", ha='center', va='center')
-            ax.axis('off')
-
-    plt.tight_layout(pad=1.0)
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    plt.savefig(output_path, dpi=dpi, bbox_inches='tight')
-    plt.close()
-    print(f"Saved: {output_path}")
 
 
 #------------------------------------------------------------------------------------------------------
