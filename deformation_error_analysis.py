@@ -176,16 +176,19 @@ for iteration,texture in enumerate(textures):
     # =========================================================================
     # DYNAMIC DIRECTORY PATH DEFINITIONS
     # =========================================================================
-    temp_ref_image_folder = rf"data\speckle_pattern_img\reference_im\Temp_reference_folder\{texture}"
-    temp_deform_image_folder = rf"data\speckle_pattern_img\deformed_im\Temp_deformed_folder\{texture}"
-    err_plots_correct       = rf"output\plots\Error_corrected\{texture}"
-    numpy_files             = rf"output\numpy_files\discanaly\{texture}"
-    scatter_plots           = rf"output\slices\slice_scatter_plots\{texture}"
-    reference_image_path    = rf"data\speckle_pattern_img\reference_im\discrete_anly\{texture}"
-    deformed_image_path     = rf"data\speckle_pattern_img\deformed_im\discrete_anly\{texture}"
-    sundic_binary_folder    = rf"output\sundic_bin\interpstudy_{texture}"
-    slice_path              = rf"output\Slices\{texture}"
-    slice_path_img = rf"output\Slices\{texture}\images"
+    # The dynamic subfolders generated in this script are specified by 
+    # deform_analysis_{texture} strings where {texture} is one of the 
+    # strings in the "textures" list above.
+     
+    temp_ref_image_folder = rf"data\speckle_pattern_img\reference_im\Temp_reference_folder\deform_analysis_{texture}"
+    temp_deform_image_folder = rf"data\speckle_pattern_img\deformed_im\Temp_deformed_folder\deform_analysis_{texture}"
+    err_plots_correct       = rf"output\plots\Error_corrected\deform_analysis_{texture}"
+    numpy_files             = rf"output\numpy_files\discanaly\deform_analysis_{texture}"
+    scatter_plots           = rf"output\slices\slice_scatter_plots\deform_analysis_{texture}"
+    reference_image_path    = rf"data\speckle_pattern_img\reference_im\discrete_anly\deform_analysis_{texture}"
+    deformed_image_path     = rf"data\speckle_pattern_img\deformed_im\discrete_anly\deform_analysis_{texture}"
+    sundic_binary_folder    = rf"output\sundic_bin\deform_analysis_{texture}"
+    slice_path              = rf"output\Slices\deform_analysis_{texture}"
 
     # Generate folders
     dynamic_directories = [temp_ref_image_folder, 
@@ -196,8 +199,7 @@ for iteration,texture in enumerate(textures):
                            reference_image_path,
                            deformed_image_path,
                            sundic_binary_folder,
-                           slice_path,
-                           slice_path_img
+                           slice_path
                            ]
 
     for dir_path in dynamic_directories:
@@ -387,9 +389,9 @@ for iteration,texture in enumerate(textures):
                 imagetype='tif', 
                 parity='odd')
             
-            for image_name in deformed_image_files:                                 # Deformed images
-                src3 = os.path.join(temp_deform_image_folder, image_name)         # Get file
-                dst3 = os.path.join(deformed_image_path, image_name)                # Move file
+            for image_name in deformed_image_files:                                 # Perlin deformed images
+                src3 = os.path.join(temp_deform_image_folder, image_name)           # Origin
+                dst3 = os.path.join(deformed_image_path, image_name)                # Destination
                 shutil.copy2(src3, dst3)
                 print(f"Copied: {image_name}")
 
@@ -669,6 +671,7 @@ for iteration,texture in enumerate(textures):
                     DIC_collapse
                     ))
            
+                # Save the slice matrix as a .npy file in 
                 save_collape = os.path.join(slice_path,f'{file_number}_slice_{string}.npy')
                 np.save(save_collape,slice_numpy)
                 #----------------------------------------------------
