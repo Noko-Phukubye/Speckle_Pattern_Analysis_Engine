@@ -2,6 +2,8 @@ import numpy as np
 import sundic.sundic as sdic
 import sundic.post_process as sdpp
 import sundic.settings as sdset
+import datetime
+
 import os
 import shutil
 from numpy.lib.stride_tricks import as_strided, sliding_window_view
@@ -1168,6 +1170,41 @@ def get_image_strings(path, imagetype='tif', parity='even'):
         raise Exception("Invalid parity selected")
 
 
+# -----------------------------------------------------------
+# Expected prefixes based on files in a folder
+# ----------------------------------------------------------
+def expected_prefixes(files_folder, odd=False, skip=True):
+    """
+    Returns an iterable object of expected prefixe numbers (assuming the files follow 
+    an even numbered naming convention). The files in
+    the folder must start with a unique integer prefix. This is 
+    used for Excel indexing purposes (for writing and reading the doc).
+
+    files_folder: string path to folder
+    odd: boolean for choosing between odd or even numbered prefixes
+    skip: boolean for using step=2 or step=1
+    """
+    filenames = os.listdir(files_folder)
+    existing_prefixes = []
+
+    for f in filenames:
+        try:
+            prefix = int(f.split('_')[0])
+            existing_prefixes.append(prefix)
+        except ValueError:
+            # Skip files that don't start with an integer
+            continue
+
+    if not existing_prefixes:
+        raise ValueError("No valid prefix files found in the folder.")
+
+    # SHould add comments because I even forgot some things
+    max_prefix_bin = max(existing_prefixes)
+    start_idx = 1 if odd else 0
+    incr = 2 if skip else 1
+    all_expected_prefix = list(range(start_idx, max_prefix_bin + 1, incr))
+    return all_expected_prefix
+
 
 # =========================================================================
 # PATTERN GENERATION AND SAMPLING METHODS
@@ -1714,7 +1751,7 @@ def generate_perlin_pair(h, w, dx_field, dy_field, excel_path, ref_image_save,
         cv2.imwrite(def_file_path, textured_deformed)
   
         print(f'{even_list[sample_idx]}_Generated_spec_image.tif saved')
-        print(f'{even_list[sample_idx] + 1}_Generated_spec_image.tif saved\n---------------------------------------------')
+        print(f'{even_list[sample_idx] + 1}_Generated_spec_image.tif saved\n-------------------------')
 
 
 # -------------------------------------------------------------
@@ -1766,7 +1803,7 @@ def swap_image_pairs(ref_dir, def_dir, file_suffix="_Generated_spec_image.tif"):
 # =========================================================================
 # DIGITAL IMAGE CORRELATION AND ANALYSIS METHODS
 # =========================================================================
-# ---------------------------------------------------------------------------------------------
+# ------------------------------------------------------------
 # Deadlock handling. Was used early in 2025 before the ray issue was 
 # resolved
 
@@ -1795,52 +1832,81 @@ def run_dic(settings, reference_images_path, deformed_images_path, binary_file_s
 
     Parameters:
         - settings: A Settings object containing the settings for the DIC analysis.
-        - resultsFile: The name of the file to store the results in.
-        - externalRay: A boolean indicating whether to use an external ray server or not.
-        - guiThread: The GUI thread object if running from the GUI, otherwise None. Used to 
-                    cleanly stop the analysis if requested from the GUI.
+        - reference_images_path: 
+        - deformed_images_path: 
+        - binary_file_save:
+        - debug_folder:
+        - contour_path:
+        - correlation_path:
+        - study_type:
+        - ref_image_type:
+        - start_index:
+        - umin:
+        - umax:
+        - u_interval:
+
 
     Returns:
-        - returnData (list): A list of subSetPoint arrays. Each subSetPoint array is a
-            3D matrix where the first plane contains the x-coordinates
-            the second plane the y-coordinates and the remaining planes the subset size,
-            shapeFn, CZNSSD value and model coefficients.  This array can be processed to
-            obtain displacement and strain data and to generate graphs.
+        - returns: .sdic files containing displacents, strains and coordininates
+        - contour plot of displacements on pattern image
+        - 
 
     Raises:
-        - ValueError: If an invalid optimization algorithm is specified.
+        - 
     """
     debug_level = settings.DebugLevel
-
-    # Set up log file if a debug folder is provided
+    #----------------------------------------------
+    # Set up log file if a debug folder is not None
+    #----------------------------------------------
     if debug_folder is not None:
+
+        # Logfile naming based on date and time
+        currenttime = datetime.datetime.now()
+        # Date time format
+        formatted_time = currenttime.strftime("%Y-%m-%d %H:%M:%S")
+
+        # Log routine output (Exceptions)
         logging.basicConfig(
-            filename=os.path.join(debug_folder, 'DIC_analysis_log.txt'),
+            filename=os.path.join(debug_folder, f'{formatted_time}_DIC_analysis_log.txt'),
             filemode='w',
             format='%(asctime)s - %(levelname)s - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S',
             level=logging.INFO
         )
 
+    # The algorithm is based on the even number naming system so 
+    # the user-provided starting index must be an even number.
     if start_index % 2 != 0:
         print("Error: start_index must be 0 or an even number to ensure correct image pairing.")
         return None
 
+    #----------------------------------------------
+    # Image processing
+    #----------------------------------------------
     planar_images = settings.ImageFolder
 
-    # For FE deformation there is only one displacement value, but it must be iterable
+    # The code is set up to accomodate rigid body translation where the file naming
+    # is slightly different from the way files named. In rigid body deformation, the naming 
+    # of each file includes the prefix, as per the normal naming convention, as well as
+    # an additional number indicating the applied deformation. The DIC analysis
+    # loops through the general prefixes as well as the translation values. 
+
+    # FE-based deformation
     if study_type == 0:
-        print("\nGeneral deformation study")
+        print("\n| DIC analysis: General deformation study")
         u_values = [1.0]
+
+    # Rigid-body translations
     elif study_type == 1:
-        print("\nRigid translation study")
+        print("\n| DIC analysis: Rigid translation study")
         u_values = np.arange(umin, umax, u_interval)
 
+    # Round the translation values to two decimals
     for u in u_values:
         u = round(u, 2)
         print(f"\nProcessing translation: {u}")
 
-        # Collect even-prefixed reference images in ascending order
+        # The names of the reference images in the folder are collected into a list
         ref_files = sorted(
             (f for f in os.listdir(reference_images_path)
              if f.endswith(f".{ref_image_type}")
@@ -1848,22 +1914,31 @@ def run_dic(settings, reference_images_path, deformed_images_path, binary_file_s
              and int(f.split('_')[0]) % 2 == 0),
             key=lambda x: int(x.split('_')[0])
         )
-        print(f'Reference files: {ref_files}\nAnalysing {len(ref_files)} image pairs...')
+        # print(f'Reference files: {ref_files}\nAnalysing {len(ref_files)} image pairs...')
 
+        # For each string in the list
         for ref_file in ref_files:
             try:
+                # Extract the prefix
                 ref_num = int(ref_file.split('_')[0])
 
+                # Check if the prefix is above or below the number specified by the
+                # user. Skip if it is not.
                 if ref_num < start_index:
                     continue
 
-                print(f"\nProcessing reference: {ref_file}")
+                # print(f"\nProcessing reference: {ref_file}")
+
+                # Make path to image
                 ref_img_path = os.path.join(reference_images_path, ref_file)
 
-                # Build deformed image path based on study type
+                # Build path to the deformed image (which is assumed to exist)
+                # For FE-based deformation
                 if study_type == 0:
                     def_file     = f"{ref_num + 1}_Generated_spec_image.tif"
                     def_img_path = os.path.join(deformed_images_path, def_file)
+
+                # For rigid-body translation
                 elif study_type == 1:
                     def_file     = f'{ref_num}_{u}_Translated_spec_image.tif'
                     def_img_path = os.path.join(deformed_images_path, def_file)
@@ -1872,12 +1947,13 @@ def run_dic(settings, reference_images_path, deformed_images_path, binary_file_s
                     print("Invalid study type. Expected 0 or 1.")
                     break
 
-                print(f"Deformed image: {def_file}")
+                # print(f"Deformed image: {def_file}")
 
                 if not os.path.exists(def_img_path):
                     print(f"Warning: Deformed image not found at {def_img_path}. Skipping.")
                     continue
-
+                
+                # Read the reference and deformed images with normalisation
                 ref_img = readImage(ref_img_path)
                 def_img = readImage(def_img_path)
 
@@ -1889,28 +1965,32 @@ def run_dic(settings, reference_images_path, deformed_images_path, binary_file_s
                     continue
 
                 # Copy image pair to the planar images folder with fixed names for SUN-DIC
+                # This to avoid consistent analysis and not having to worry about file naming
                 cv2.imwrite(os.path.join(planar_images, "0_Generated_spec_image.tif"), ref_img)
                 cv2.imwrite(os.path.join(planar_images, "1_Generated_spec_image.tif"), def_img)
 
-                # Build output binary file path
+                # Build path for the .sdic results file
                 if study_type == 0:
                     save_file_name = f'{ref_num}_results.sdic'
                 elif study_type == 1:
                     save_file_name = f'{ref_num}_T{u}_results.sdic'
                 binary_save = os.path.join(binary_file_save, save_file_name)
 
-                # Retry loop — retries up to 3 times if Ray fails mid-analysis
+                # Retry loop —> retries up to 3 times if Ray fails mid-analysis (or any other exception)
                 rerun        = True
                 rerun_number = 0
 
                 while rerun and rerun_number < 3:
-                    # Deadlock timers: cancel Ray after 120s, force exit after 600s
+                    # Deadlock timers: cancel Ray after 120s, force exit after 600s (not anymore)
                     timer  = threading.Timer(120, force_ray_stop)
                     timer2 = threading.Timer(600, hard_exit)
                     timer.start()
                     timer2.start()
 
                     try:
+                        # ----------------------------------------------------------
+                        # Perform DIC analysis
+                        # ----------------------------------------------------------
                         sdic._tic_()
                         sdic.planarDICLocal(settings, binary_save, externalRay=True)
                         sdic._toc_()
@@ -1918,6 +1998,7 @@ def run_dic(settings, reference_images_path, deformed_images_path, binary_file_s
                         timer2.cancel()
                         rerun = False
 
+                    # Time out error
                     except TimeoutError as te:
                         print(f'Ray initialisation timed out: {te}. Retrying...')
                         logging.error(f"Ray timeout for pair {ref_num}/{ref_num + 1}: {te}")
@@ -1926,6 +2007,7 @@ def run_dic(settings, reference_images_path, deformed_images_path, binary_file_s
                         rerun_number += 1
                         print(f"Retry: {rerun_number}")
 
+                    # Other ray-related errors that have been experienced before
                     except Exception as e:
                         if ("unable to register worker with raylet" in str(e).lower() or
                                 "failed to register worker to raylet" in str(e).lower()):
@@ -1958,8 +2040,10 @@ def run_dic(settings, reference_images_path, deformed_images_path, binary_file_s
                             timer.cancel()
                             timer2.cancel()
                             raise
-
+                
+                # --------------------------------------------------
                 # Save contour plot of displacement field
+                # --------------------------------------------------
                 if contour_path is not None:
                     fig = sdpp.plotDispContour(
                         binary_save, imgPair=-1, alpha=0.75, plotImage=True,
@@ -1969,7 +2053,9 @@ def run_dic(settings, reference_images_path, deformed_images_path, binary_file_s
                     if debug_level > 1:
                         print(f"Contour plot saved to {contour_path}")
 
+                # -------------------------------------------------
                 # Save ZNCC correlation distribution plot
+                # -------------------------------------------------
                 if correlation_path is not None:
                     sdpp.plotZNCCContour(
                         binary_save, imgPair=-1, alpha=0.75, plotImage=True,
@@ -1981,6 +2067,7 @@ def run_dic(settings, reference_images_path, deformed_images_path, binary_file_s
                 if debug_level > 1:
                     print(f"Results saved to {binary_save}\n")
 
+            # Other exceptions
             except (ValueError, LinAlgError, UnboundLocalError, IOError) as e:
                 print(f'Error processing pair {ref_num}/{ref_num + 1} at translation {u}: {e}')
                 logging.error(f'Error processing pair {ref_num}/{ref_num + 1} at translation {u}: {e}')
@@ -1988,6 +2075,7 @@ def run_dic(settings, reference_images_path, deformed_images_path, binary_file_s
                 timer2.cancel()
                 print('Continuing to next image pair...')
 
+            # And interruption
             except KeyboardInterrupt:
                 print("User interrupted the process.")
                 logging.info('Keyboard interrupt by user.')
@@ -1997,127 +2085,110 @@ def run_dic(settings, reference_images_path, deformed_images_path, binary_file_s
     return None
 
 
-# ---------------------------------------------------------------------------------------------
-# Translated images check for existence
-def get_translation_files(file_folder,reference_images_path,umin,umax,u_interval,
-                           image_type = 'tif'):
-
-    print("\n----------------------------------------------\nChecking for translated image files...")
-    u = np.arange(umin, umax, u_interval)  # x translations
-
-    # Iterate over u. Only one iteration for general deformation
-    for i, u in enumerate(u):
-        u = round(u, 2)
-        print(f"\nProcessing translation {u}")
-
-        ref_files = sorted(
-                (f for f in os.listdir(reference_images_path) 
-                if f.endswith(f".{image_type}") and 
-                f.split('_')[0].isdigit() and 
-                int(f.split('_')[0]) % 2 == 0),
-                key=lambda x: int(x.split('_')[0])
-            )
-        print('\nReference files:', ref_files,f'\nAnalysing {len(ref_files)} image files... \n\n')
-
-        # For defined list of images, loop through each and perform DIC.
-        for ref_file in ref_files:
-
-            ref_num = int(ref_file.split('_')[0])
-            def_file = f'{ref_num}_{u}_Translated_spec_image.tif'
-            # print(f"Deformed image: {def_file}")
-            def_img_path = os.path.join(file_folder, def_file)
-            print(f'Path seen by sanity = {file_folder}')
-
-            if not os.path.exists(def_img_path):
-                    print(f"File {def_file} not found. Skipping...")
-                    continue
-            else:
-                 print(f"file {def_file} exists")
-
-    return None
-
-# ---------------------------------------------------------------------------------------------
+# -----------------------------------------------------------
+# Analyse Rigid-body translation results
+# -----------------------------------------------------------
 def subpixel_analysis(translation_bin_folder, save_figure = None, 
                       u_min = 0.0, u_max = 1.5, u_interval = 0.5):
     ''' 
-    The following code block is used to load DIC data files and compare with ground truth displacement.
-    The DIC data is stored in binary .sdic files.
+    The following code block is used to load DIC data files that were generated 
+    following rigid-body translation (file names include the translation value 'u') 
+    and compares with ground truth displacement. Returns a matrix of translations 
+    and errors as well as a plot of bias error at different translation levels.
 
-    Returns: Matrix of errors: columns correspond with imposed displacement and rows 
+    Parameters:
+        - translation_bin_folder: String to the directory containing .sdic results files
+        - save_figure: String the the directory where the plot is saved
+        - u_min: Float - minimum displacement
+        - u_max: Float - maximum applied displacement
+        - u_interval: Float increments of displacent
+
+    Returns: 
+        -   ndarry Matrix of errors: columns correspond with imposed displacement and rows 
              correspond with a specific file instance
 
-             Plot showing errors against displacement
-              
-             *Might return error map figure as well (to be added)*
+        -    Plot showing errors against displacement
     '''
 
+    # Create an iterable object using the translation extremes and interval
     u_0 = np.arange(float(u_min), float(u_max), float(u_interval))
 
     # Fetch names that end in 'sdic'
     all_sundic_files = [f for f in os.listdir(translation_bin_folder) if f.endswith('results.sdic')]
 
-    # get unique integer numbers from files
+    # Get unique integer numbers from files. There are multiple files associated with 
+    # each reference image. Thats why we need to get the unique file names. The even 
+    # prefixes provide a way to group the files that belong to the same image.
+
+    # Extract the prefixes and store in list
     prefixes_in_files = sorted(set(int(f.split('_')[0]) for f in all_sundic_files))
 
-    print(f'Found prefixes: {prefixes_in_files}')
+    # print(f'Found prefixes: {prefixes_in_files}')
     number_of_ref_imgs = len(prefixes_in_files)
 
+    # Initialise matrix for storing displacements and errors based on the 
+    # number of reference image files (not the number of deformed images as they 
+    # are more numerous than the reference images)
     error_matrix = np.full((len(u_0), number_of_ref_imgs), np.nan)
-    print(f'Error matrix shape = {error_matrix.shape}\n')
+    # print(f'Error matrix shape = {error_matrix.shape}\n')
 
+    # For each translation
     for i, u in enumerate(u_0):
-        ''' Load DIC data and compare with ground truth displacement 
-            values.It then stores the mean error for each file in a vector to be accessed later. '''
-
-        # At a given u_imposed displacement...
 
         # Round u to 2 decimal places to avoid floating point errors
         u2 = round(u, 2)
         # print(f'Processing subpixel translation u={u2}')
 
-        # Load DIC data files for the current subpixel translation.
+        # Load all DIC data files for the current subpixel translation. 
+        # E.g. If there are files named 0_u_name.sdic, 2_u_name.sdic, they
+        # are both loaded
         sundic_binary_files = sorted(
             [f for f in os.listdir(translation_bin_folder)
             if f"T{u2}" in f and f.endswith('results.sdic')],  # Use rounded u
             key=lambda x: int(x.split('_')[0])
         )
-        print(list(enumerate(sundic_binary_files)))
-        # print(f'Len(sundic_files) = {len(sundic_binary_files)}')
+        # print(list(enumerate(sundic_binary_files)))
     
+        # For each .sdic file
         for ffile in sundic_binary_files:
+
+            # Extract the prefix
             prefix = int(ffile.split('_')[0])
 
+            # Check if the prefix matches one of the prefixes in the list
+            # that was defined before the loop
             if prefix not in prefixes_in_files:
                 print(f"Skipping unrecognized prefix: {prefix}")
                 continue
-
+            
+            # Get the index of the prefix in context of the list
             j = prefixes_in_files.index(prefix)
 
+            # Path to specific results file
             sundic_data_path = os.path.join(translation_bin_folder, ffile)
             
             if not os.path.exists(sundic_data_path):
                 print(f'File not found: {sundic_data_path}')
                 continue
 
-            print('\nCurrent u:', u2)
-            print(f'Loading data from {sundic_data_path}')
+            # print('\nCurrent u:', u2)
+            # print(f'Loading data from {sundic_data_path}')
 
             try:
+                # Get the displacement results
                 sundic_data, _, _ = sdpp.getDisplacements(
                     sundic_data_path,-1, 
                     smoothWindow=0)
             except UnboundLocalError as no_data:
                 print(f'\nError: {no_data}\n.sdic file possibly has a high NAN content\nSkipping...')
                 continue     
-
+            
+            # Get the x-displacements
             X_disp = sundic_data[:, 3]
             # print(f'X_disp shape: {X_disp.shape}')
 
-            # Calculate error
-            # error_x = np.mean(X_disp[~np.isnan(X_disp)] - np.abs(u2))
-            # error_x = np.abs(np.nanmean(X_disp)) - np.abs(u2)
+            # Calculate the error
             error_x = np.nanmean(X_disp) - u2 
-            # error_x = np.mean(X_disp[~np.isnan(X_disp)]) - u2
             print(f'X disp: {np.mean(X_disp[~np.isnan(X_disp)])}')
             print(f'u2: {u2}')
             print(f'Error: {error_x:.5f}')
@@ -2173,43 +2244,8 @@ def subpixel_analysis(translation_bin_folder, save_figure = None,
         print(f'\nSubpixel error curve saved at: {save_figure_path}')
     plt.show()
 
-    # Standard deviation error
-
     return error_matrix, figure
 
-
-# ---------------------------------------------------------------------------------------------
-def expected_prefixes(files_folder, odd=False, skip=True):
-    """
-    Returns an iterable object of expected prefixe numbers (assuming the files follow 
-    an even numbered naming convention). The files in
-    the folder must start with a unique integer prefix. This is 
-    used for Excel indexing purposes (for writing and reading the doc).
-
-    files_folder: string path to folder
-    odd: boolean for choosing between odd or even numbered prefixes
-    skip: boolean for using step=2 or step=1
-    """
-    filenames = os.listdir(files_folder)
-    existing_prefixes = []
-
-    for f in filenames:
-        try:
-            prefix = int(f.split('_')[0])
-            existing_prefixes.append(prefix)
-        except ValueError:
-            # Skip files that don't start with an integer
-            continue
-
-    if not existing_prefixes:
-        raise ValueError("No valid prefix files found in the folder.")
-
-    # SHould add comments because I even forgot some things
-    max_prefix_bin = max(existing_prefixes)
-    start_idx = 1 if odd else 0
-    incr = 2 if skip else 1
-    all_expected_prefix = list(range(start_idx, max_prefix_bin + 1, incr))
-    return all_expected_prefix
 
 
 # ---------------------------------------------------------------------------------------------

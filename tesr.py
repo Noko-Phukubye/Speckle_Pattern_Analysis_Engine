@@ -1,5 +1,5 @@
-thisvar = "0_string.p"
-string_vector = thisvar.split('_')
-new_name = f'{2}_{string_vector[-1]}'
+import datetime
 
-print(new_name)
+now = datetime.datetime.now()
+formatted_time = now.strftime("%Y-%m-%d %H:%M:%S")
+print(formatted_time)
